@@ -1,8 +1,8 @@
 {
-  "project": "test-1",
+  "project": "example",
   "project_folder": "../data/synthetic_data/test",
   "work_folder": "../data/synthetic_data/temp",
-  "cube_shape": [300, 300, 1250],
+  "cube_shape": [100, 100, 400],
   "incident_angles": [7, 15, 24],
   "digi": 4,
   "infill_factor": 10,

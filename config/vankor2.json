@@ -1,6 +1,6 @@
 {
   "project": "vankor-2",
-  "project_folder": "../data/synthetic_data/vankor_field_v1",
+  "project_folder": "../data/synthetic_data/vankor_field_v2",
   "work_folder": "../data/synthetic_data/temp",
   "cube_shape": [1351, 572, 2000],
   "incident_angles": [0],
