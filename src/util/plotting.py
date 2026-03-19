@@ -258,3 +258,45 @@ def plot_3d_array_with_slider(array, axis='z'):
     plt.show()
     
     return fig, slider
+
+def plot_gp_model(gp_result, property_col, ax=None):
+    """
+    Plot GP model with original data.
+    
+    Parameters:
+    -----------
+    gp_result : dict
+        Output from fit_gp_model()
+    property_col : str
+        Property name (for labels)
+    ax : matplotlib axis object
+        If None, creates new figure
+    """
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(8, 6))
+    
+    model = gp_result['model']
+    
+    # Denormalize the stored training data
+    X_orig = model.X_train_.flatten()
+    y_orig = model.y_train_ * model._y_train_std + model._y_train_mean
+    
+    # Generate smooth curve from GP
+    x_smooth = np.linspace(X_orig.min(), X_orig.max(), 200).reshape(-1, 1)
+    y_mean, y_std = model.predict(x_smooth, return_std=True)
+    
+    # Plot
+    ax.scatter(X_orig, y_orig, alpha=0.6, label='Original Data', s=20)
+    ax.plot(x_smooth, y_mean, 'r-', label='GP Mean', linewidth=2)
+    ax.fill_between(x_smooth.flatten(), 
+                   y_mean - 2*y_std, 
+                   y_mean + 2*y_std, 
+                   alpha=0.3, label='±2σ')
+    
+    ax.set_xlabel('Depth (m)')
+    ax.set_ylabel(property_col)
+    ax.set_title(f'GP Model: {property_col}')
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    
+    return ax
