@@ -1,7 +1,28 @@
 import os
 import numpy as np
+import lasio as las
 import segyio
 import time
+
+def read_las(las_files):
+    las_dfs = {}
+
+    for file_path in las_files:
+        # Read the LAS file
+        las_obj = las.read(file_path)
+        
+        # Convert to DataFrame
+        df = las_obj.df()
+        
+        # Extract filename without extension (e.g., 'Tgl-30.las' -> 'Tgl-30')
+        filename = os.path.basename(file_path)
+        key_name = os.path.splitext(filename)[0]
+        
+        # Store in dictionary
+        las_dfs[key_name] = df
+        
+        print(f"Loaded: {key_name} - {len(df)} rows, {len(df.columns)} curves")
+    return las_dfs
 
 def read_sgy_selective(filepath, endian='big'):
     with segyio.open(filepath, mode='r', endian=endian, ignore_geometry=True) as src:
