@@ -76,5 +76,7 @@ def prepare_valid_tagilsk(las_dfs_o):
 
 def _create_velocities(df):
     df['VP'] = 1e6/df['DTP']
+    df['VP_LOG'] = np.log(df['VP'])
     df['VS'] = 1e6/df['DTS']
+    df['VS_LOG'] = np.log(df['VS'])
             
