@@ -96,79 +96,64 @@ import torch
 from typing import Dict
 
 
-def save_gp_model(gp_result, filepath):
+def save_gp_model(gp_result: dict, filepath: str) -> None:
     """
-    Save a GP model and its associated components to a file using PyTorch.
+    Save GP model and all components needed for prediction.
     
     Args:
-        gp_result: Dictionary containing the GP model and related components
-                   Expected keys: 'model', 'likelihood', 'scaler_x', 'scaler_y', 'depth_range'
-        filepath: Path where the model should be saved
+        gp_result: Dictionary from fit_gp_model()
+        filepath: Path to save the model (e.g., 'model.pt')
     """
-    # Get the hyperparameters from the model
     model = gp_result['model']
+    num_tasks = model.num_tasks if hasattr(model, 'num_tasks') else 1
     
-    # Prepare the state dictionary with all necessary parameters
-    state_dict = {
+    torch.save({
         'model_state_dict': model.state_dict(),
         'likelihood_state_dict': gp_result['likelihood'].state_dict(),
-        'model_type': type(model).__name__,
-        'num_tasks': getattr(model, 'num_tasks', 1),
         'scaler_x': gp_result['scaler_x'],
         'scaler_y': gp_result['scaler_y'],
         'depth_range': gp_result['depth_range'],
-        'lengthscale': gp_result['lengthscale']
-    }
-    
-    # Save the state dictionary
-    torch.save(state_dict, filepath)
-    print(f"GP model saved to {filepath}")
+        'lengthscale': gp_result['lengthscale'],
+        'num_tasks': num_tasks,
+    }, filepath)
 
 
-def load_gp_model(filepath: str):
+def load_gp_model(filepath: str) -> dict:
     """
-    Load a GP model and its associated components from a file using PyTorch.
+    Load GP model for prediction.
     
     Args:
-        filepath: Path from which the model should be loaded
-    
+        filepath: Path to saved model
+        
     Returns:
-        Dictionary containing the loaded GP model and related components
+        Dictionary compatible with predict_gp_model()
     """
-    # Load the state dictionary
-    state_dict = torch.load(filepath, map_location=DEVICE)
+    checkpoint = torch.load(filepath, map_location=DEVICE, weights_only=False)
     
-    # Retrieve stored parameters
-    model_type = state_dict['model_type']
-    num_tasks = state_dict['num_tasks']
-    lengthscale_lower_bound = state_dict['lengthscale']
+    num_tasks = checkpoint['num_tasks']
+    lengthscale = checkpoint['lengthscale']
     
-    # Create dummy tensors for initialization
-    dummy_x = torch.randn(1, 1, device=DEVICE)
-    dummy_y = torch.randn(1, device=DEVICE) if num_tasks == 1 else torch.randn(1, num_tasks, device=DEVICE)
+    # Create dummy tensors for initialization (required by ExactGP)
+    dummy_x = torch.empty(1, 1, device=DEVICE)
+    dummy_y = torch.empty(1, num_tasks, device=DEVICE)
     
-    # Initialize model and likelihood based on type
-    if model_type == 'GPModel':
-        likelihood = gpytorch.likelihoods.GaussianLikelihood().to(DEVICE)
-        model = GPModel(dummy_x, dummy_y, likelihood, lengthscale_lower_bound).to(DEVICE)
-    elif model_type == 'MultitaskGPModel':
-        likelihood = gpytorch.likelihoods.MultitaskGaussianLikelihood(num_tasks=num_tasks).to(DEVICE)
-        model = MultitaskGPModel(dummy_x, dummy_y, likelihood, lengthscale_lower_bound, num_tasks).to(DEVICE)
+    # Recreate likelihood and model with correct architecture
+    if num_tasks == 1:
+        likelihood = gpytorch.likelihoods.GaussianLikelihood()
+        model = GPModel(dummy_x, dummy_y, likelihood, lengthscale).to(DEVICE)
     else:
-        raise ValueError(f"Unknown model type: {model_type}")
+        likelihood = gpytorch.likelihoods.MultitaskGaussianLikelihood(num_tasks=num_tasks)
+        model = MultitaskGPModel(dummy_x, dummy_y, likelihood, lengthscale, num_tasks).to(DEVICE)
     
-    # Load the actual parameters
-    model.load_state_dict(state_dict['model_state_dict'])
-    likelihood.load_state_dict(state_dict['likelihood_state_dict'])
+    # Load trained weights
+    model.load_state_dict(checkpoint['model_state_dict'])
+    likelihood.load_state_dict(checkpoint['likelihood_state_dict'])
     
-    # Create the result dictionary
-    gp_result = {
+    return {
         'model': model,
         'likelihood': likelihood,
-        'scaler_x': state_dict['scaler_x'],
-        'scaler_y': state_dict['scaler_y'],
-        'depth_range': state_dict['depth_range']
+        'scaler_x': checkpoint['scaler_x'],
+        'scaler_y': checkpoint['scaler_y'],
+        'depth_range': checkpoint['depth_range'],
+        'lengthscale': lengthscale,
     }
-    
-    print(f"GP model loaded from {filepath}")
-    return gp_result
