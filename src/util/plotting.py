@@ -358,7 +358,8 @@ def visualize_multichannel_gp_results_side_by_side(
     original_train_data: pd.DataFrame,
     depth_col: str = 'DEPTH',
     x_new: np.ndarray = None,
-    figsize: tuple = (15, 5)
+    figsize: tuple = (15, 5),
+    log_transform: bool = False
 ):
     """
     Visualize GP model results for multiple channels side-by-side with uncertainty bounds and original training data.
@@ -385,7 +386,7 @@ def visualize_multichannel_gp_results_side_by_side(
         x_new = np.linspace(depth_min, depth_max, 500)
     
     # Get predictions
-    means, stds = predict_gp_model(gp_result, x_new)
+    means, stds = predict_gp_model(gp_result, x_new, log_transform)
     
     # Reshape means and stds appropriately based on number of properties
     if n_properties == 1:

@@ -79,4 +79,5 @@ def _create_velocities(df):
     df['VP_LOG'] = np.log(df['VP'])
     df['VS'] = 1e6/df['DTS']
     df['VS_LOG'] = np.log(df['VS'])
+    df['PL_GG_LOG'] = np.log(df['PL_GG'])
             
