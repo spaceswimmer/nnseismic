@@ -2,6 +2,7 @@ import torch
 import gpytorch
 import numpy as np
 import pandas as pd
+from tqdm import tqdm
 from sklearn.preprocessing import StandardScaler
 from typing import Dict, List, Optional, Tuple, Union
 
@@ -24,11 +25,30 @@ class GPModel(gpytorch.models.ExactGP):
         mean_x = self.mean_module(x)
         covar_x = self.covar_module(x)
         return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
+    
+class MultitaskGPModel(gpytorch.models.ExactGP):
+    def __init__(self, train_x, train_y, likelihood, lengthscale, num_tasks):
+        super().__init__(train_x, train_y, likelihood)
+        self.num_tasks = num_tasks
+        self.mean_module = gpytorch.means.MultitaskMean(
+            gpytorch.means.ConstantMean(), num_tasks=num_tasks
+        )
+        self.covar_module = gpytorch.kernels.MultitaskKernel(
+            gpytorch.kernels.RBFKernel(
+                lengthscale_constraint=gpytorch.constraints.GreaterThan(lengthscale)
+            ),
+            num_tasks=num_tasks,
+            rank=1
+        )
 
+    def forward(self, x):
+        mean_x = self.mean_module(x)
+        covar_x = self.covar_module(x)
+        return gpytorch.distributions.MultitaskMultivariateNormal(mean_x, covar_x)
 
 def fit_gp_model(
     df: pd.DataFrame,
-    property_col: str,
+    property_col: Union[str, List[str]],
     depth_col: str = 'DEPTH',
     training_iter: int = 100,
     max_points: Optional[int] = None,
@@ -41,7 +61,14 @@ def fit_gp_model(
     Returns dict with: 'model', 'likelihood', 'scaler_x', 'scaler_y', 'depth_range'
     """
     # Extract valid data
-    data = df[[depth_col, property_col]].dropna()
+    if isinstance(property_col, str):
+        cols_to_select = [depth_col, property_col]
+        num_tasks = 1
+    else:
+        cols_to_select = [depth_col] + property_col
+        num_tasks = len(property_col)
+    
+    data = df[cols_to_select].dropna()
     
     if len(data) < 10:
         print(f"Warning: Only {len(data)} points for {property_col}")
@@ -59,15 +86,19 @@ def fit_gp_model(
     scaler_x = StandardScaler()
     scaler_y = StandardScaler()
     X_norm = scaler_x.fit_transform(X)
-    y_norm = scaler_y.fit_transform(y.reshape(-1, 1)).ravel()
+    y_norm = scaler_y.fit_transform(y)
     
     # Convert to tensors
     train_x = torch.tensor(X_norm, dtype=torch.float32, device=DEVICE)
     train_y = torch.tensor(y_norm, dtype=torch.float32, device=DEVICE)
     
     # Train GP
-    likelihood = gpytorch.likelihoods.GaussianLikelihood()
-    model = GPModel(train_x, train_y, likelihood, lengthscale).to(DEVICE)
+    likelihood = gpytorch.likelihoods.MultitaskGaussianLikelihood(num_tasks=num_tasks) if num_tasks > 1 else gpytorch.likelihoods.GaussianLikelihood()
+
+    if num_tasks == 1:
+        model = GPModel(train_x, train_y, likelihood, lengthscale).to(DEVICE)
+    else:
+        model = MultitaskGPModel(train_x, train_y, likelihood, lengthscale, num_tasks).to(DEVICE)
     
     model.train()
     likelihood.train()
@@ -75,11 +106,13 @@ def fit_gp_model(
     optimizer = torch.optim.Adam(model.parameters(), lr=0.1)
     mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
     
-    for _ in range(training_iter):
+    for i in tqdm(range(training_iter), desc=f"Training GP for {property_col}"):
         optimizer.zero_grad()
         output = model(train_x)
         loss = -mll(output, train_y)
         loss.backward()
+        if i % 5 == 0:  # Print every 10 iterations
+            print(f"Iteration {i}, Loss: {loss.item():.4f}")
         optimizer.step()
     
     print(f"{property_col}: trained on {len(data)} points")
@@ -95,7 +128,7 @@ def fit_gp_model(
 
 def fit_gp_model_all_wells(
     las_dfs_dict: Dict[str, pd.DataFrame],
-    property_col: str,
+    property_col: Union[str, List[str]],
     depth_col: str = 'DEPTH',
     **kwargs
 ) -> Optional[dict]:
@@ -103,8 +136,13 @@ def fit_gp_model_all_wells(
     all_data = []
     
     for well_name, df in las_dfs_dict.items():
-        if property_col in df.columns and depth_col in df.columns:
-            all_data.append(df[[depth_col, property_col]])
+        if isinstance(property_col, str):
+            cols_to_check = [depth_col, property_col]
+        else:
+            cols_to_check = [depth_col] + property_col
+            
+        if all(col in df.columns for col in cols_to_check):
+            all_data.append(df[cols_to_check])
     
     if not all_data:
         print(f"No data found for {property_col}")
@@ -137,7 +175,7 @@ def predict_gp_model(gp_result: dict, x_new: np.ndarray) -> Tuple[np.ndarray, np
         std_norm = preds.stddev.cpu().numpy()
     
     # Denormalize outputs
-    mean = scaler_y.inverse_transform(mean_norm.reshape(-1, 1)).ravel()
-    std = std_norm * scaler_y.scale_[0]
+    mean = scaler_y.inverse_transform(mean_norm).squeeze()
+    std = std_norm * scaler_y.scale_
     
     return mean, std

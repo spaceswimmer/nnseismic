@@ -1,8 +1,14 @@
 import os
 import numpy as np
 import lasio as las
+from typing import Dict
+from util.gaussian_processes import GPModel, MultitaskGPModel
+import gpytorch
+import torch
 import segyio
 import time
+
+DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 def read_las(las_files):
     las_dfs = {}
@@ -81,3 +87,96 @@ def find_viable_arrays(folder_path):
     
     print(f"\nFound {len(valid_arrays)} arrays with multiple unique values")
     return valid_arrays
+
+import torch
+from typing import Dict
+
+
+import torch
+from typing import Dict
+
+
+def save_gp_model(gp_result: Dict, filepath: str):
+    """
+    Save a GP model and its associated components to a file using PyTorch.
+    
+    Args:
+        gp_result: Dictionary containing the GP model and related components
+                   Expected keys: 'model', 'likelihood', 'scaler_x', 'scaler_y', 'depth_range'
+        filepath: Path where the model should be saved
+    """
+    # Get the hyperparameters from the model
+    model = gp_result['model']
+    
+    # Extract lengthscale constraint lower bound
+    if hasattr(model.covar_module.base_kernel, 'lengthscale_constraint'):
+        lengthscale_lower_bound = model.covar_module.base_kernel.lengthscale_constraint.lower_bound.item()
+    elif hasattr(model.covar_module, 'data_covar_module'):  # For multitask model
+        lengthscale_lower_bound = model.covar_module.data_covar_module.lengthscale_constraint.lower_bound.item()
+    else:
+        lengthscale_lower_bound = 0.2  # Default fallback
+    
+    # Prepare the state dictionary with all necessary parameters
+    state_dict = {
+        'model_state_dict': model.state_dict(),
+        'likelihood_state_dict': gp_result['likelihood'].state_dict(),
+        'model_type': type(model).__name__,
+        'num_tasks': getattr(model, 'num_tasks', 1),
+        'lengthscale_lower_bound': lengthscale_lower_bound,
+        'scaler_x': gp_result['scaler_x'],
+        'scaler_y': gp_result['scaler_y'],
+        'depth_range': gp_result['depth_range']
+    }
+    
+    # Save the state dictionary
+    torch.save(state_dict, filepath)
+    print(f"GP model saved to {filepath}")
+
+
+def load_gp_model(filepath: str):
+    """
+    Load a GP model and its associated components from a file using PyTorch.
+    
+    Args:
+        filepath: Path from which the model should be loaded
+    
+    Returns:
+        Dictionary containing the loaded GP model and related components
+    """
+    # Load the state dictionary
+    state_dict = torch.load(filepath, map_location=DEVICE)
+    
+    # Retrieve stored parameters
+    model_type = state_dict['model_type']
+    num_tasks = state_dict['num_tasks']
+    lengthscale_lower_bound = state_dict['lengthscale_lower_bound']
+    
+    # Create dummy tensors for initialization
+    dummy_x = torch.randn(1, 1, device=DEVICE)
+    dummy_y = torch.randn(1, device=DEVICE) if num_tasks == 1 else torch.randn(1, num_tasks, device=DEVICE)
+    
+    # Initialize model and likelihood based on type
+    if model_type == 'GPModel':
+        likelihood = gpytorch.likelihoods.GaussianLikelihood().to(DEVICE)
+        model = GPModel(dummy_x, dummy_y, likelihood, lengthscale_lower_bound).to(DEVICE)
+    elif model_type == 'MultitaskGPModel':
+        likelihood = gpytorch.likelihoods.MultitaskGaussianLikelihood(num_tasks=num_tasks).to(DEVICE)
+        model = MultitaskGPModel(dummy_x, dummy_y, likelihood, lengthscale_lower_bound, num_tasks).to(DEVICE)
+    else:
+        raise ValueError(f"Unknown model type: {model_type}")
+    
+    # Load the actual parameters
+    model.load_state_dict(state_dict['model_state_dict'])
+    likelihood.load_state_dict(state_dict['likelihood_state_dict'])
+    
+    # Create the result dictionary
+    gp_result = {
+        'model': model,
+        'likelihood': likelihood,
+        'scaler_x': state_dict['scaler_x'],
+        'scaler_y': state_dict['scaler_y'],
+        'depth_range': state_dict['depth_range']
+    }
+    
+    print(f"GP model loaded from {filepath}")
+    return gp_result

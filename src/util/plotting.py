@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 from matplotlib.widgets import Slider
 from IPython.display import display
 import ipywidgets as widgets
+from typing import Union, List
 
 def plot_well_logs(df, columns, well_name=None, figsize=None, depth_range=None):
     """
@@ -259,44 +260,181 @@ def plot_3d_array_with_slider(array, axis='z'):
     
     return fig, slider
 
-def plot_gp_model(gp_result, property_col, ax=None):
+def visualize_multichannel_gp_results(
+    gp_result: dict,
+    property_col: Union[str, List[str]],
+    original_train_data: pd.DataFrame,
+    depth_col: str = 'DEPTH',
+    x_new: np.ndarray = None,
+    figsize: tuple = (12, 8)
+):
     """
-    Plot GP model with original data.
+    Visualize GP model results for multiple channels with uncertainty bounds and original training data.
     
-    Parameters:
-    -----------
-    gp_result : dict
-        Output from fit_gp_model()
-    property_col : str
-        Property name (for labels)
-    ax : matplotlib axis object
-        If None, creates new figure
+    Args:
+        gp_result: Dictionary containing the fitted GP model and related components
+        property_col: Name(s) of the property column(s) used for modeling
+        original_train_data: Pandas DataFrame containing the original training data
+        depth_col: Name of the depth column (default: 'DEPTH')
+        x_new: New depth values for prediction (if None, generates a range based on training data)
+        figsize: Figure size tuple (width, height)
     """
-    if ax is None:
-        fig, ax = plt.subplots(figsize=(8, 6))
+    # Handle single property case
+    if isinstance(property_col, str):
+        property_cols = [property_col]
+    else:
+        property_cols = property_col
     
-    model = gp_result['model']
+    n_properties = len(property_cols)
     
-    # Denormalize the stored training data
-    X_orig = model.X_train_.flatten()
-    y_orig = model.y_train_ * model._y_train_std + model._y_train_mean
+    # Generate prediction depths if not provided
+    if x_new is None:
+        depth_min, depth_max = gp_result['depth_range']
+        x_new = np.linspace(depth_min, depth_max, 500)
     
-    # Generate smooth curve from GP
-    x_smooth = np.linspace(X_orig.min(), X_orig.max(), 200).reshape(-1, 1)
-    y_mean, y_std = model.predict(x_smooth, return_std=True)
+    # Get predictions
+    means, stds = predict_gp_model(gp_result, x_new)
     
-    # Plot
-    ax.scatter(X_orig, y_orig, alpha=0.6, label='Original Data', s=20)
-    ax.plot(x_smooth, y_mean, 'r-', label='GP Mean', linewidth=2)
-    ax.fill_between(x_smooth.flatten(), 
-                   y_mean - 2*y_std, 
-                   y_mean + 2*y_std, 
-                   alpha=0.3, label='±2σ')
+    # Reshape means and stds appropriately based on number of properties
+    if n_properties == 1:
+        if means.ndim == 0 or means.size == 1:
+            # Single value case - reshape to column vector
+            means = means.reshape(-1, 1)
+            stds = stds.reshape(-1, 1)
+        elif means.ndim == 1:
+            # 1D array case - reshape to column vector
+            means = means.reshape(-1, 1)
+            stds = stds.reshape(-1, 1)
+    else:
+        # For multi-task, ensure means/stds are shaped as (n_predictions, n_properties)
+        if means.ndim == 1:
+            # This happens when predict_gp_model returns flattened array for multitask
+            means = means.reshape(-1, n_properties)
+            stds = stds.reshape(-1, n_properties)
+        elif means.shape[0] == n_properties:
+            # If means is (n_properties, n_predictions), transpose it
+            means = means.T
+            stds = stds.T
     
-    ax.set_xlabel('Depth (m)')
-    ax.set_ylabel(property_col)
-    ax.set_title(f'GP Model: {property_col}')
-    ax.legend()
-    ax.grid(True, alpha=0.3)
+    # Create subplots
+    fig, axes = plt.subplots(n_properties, 1, figsize=figsize, sharex=True)
     
-    return ax
+    # Ensure axes is always a list for consistent indexing
+    if n_properties == 1:
+        axes = [axes]
+    
+    for i, prop in enumerate(property_cols):
+        ax = axes[i]
+        
+        # Plot original training data
+        mask = ~original_train_data[prop].isna()
+        train_depths = original_train_data[depth_col][mask]
+        train_values = original_train_data[prop][mask]
+        ax.scatter(train_depths, train_values, alpha=0.5, s=10, label='Original Training Data', color='red')
+        
+        # Plot GP predictions
+        ax.plot(x_new, means[:, i], label='GP Prediction', color='blue', linewidth=2)
+        
+        # Plot uncertainty bounds
+        ax.fill_between(x_new, 
+                       means[:, i] - 2*stds[:, i], 
+                       means[:, i] + 2*stds[:, i], 
+                       alpha=0.3, color='blue', label='95% Confidence Interval')
+        
+        ax.set_ylabel(prop)
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+    
+    axes[-1].set_xlabel(depth_col)
+    plt.tight_layout()
+    plt.show()
+
+
+def visualize_multichannel_gp_results_side_by_side(
+    gp_result: dict,
+    property_col: Union[str, List[str]],
+    original_train_data: pd.DataFrame,
+    depth_col: str = 'DEPTH',
+    x_new: np.ndarray = None,
+    figsize: tuple = (15, 5)
+):
+    """
+    Visualize GP model results for multiple channels side-by-side with uncertainty bounds and original training data.
+    
+    Args:
+        gp_result: Dictionary containing the fitted GP model and related components
+        property_col: Name(s) of the property column(s) used for modeling
+        original_train_data: Pandas DataFrame containing the original training data
+        depth_col: Name of the depth column (default: 'DEPTH')
+        x_new: New depth values for prediction (if None, generates a range based on training data)
+        figsize: Figure size tuple (width, height)
+    """
+    # Handle single property case
+    if isinstance(property_col, str):
+        property_cols = [property_col]
+    else:
+        property_cols = property_col
+    
+    n_properties = len(property_cols)
+    
+    # Generate prediction depths if not provided
+    if x_new is None:
+        depth_min, depth_max = gp_result['depth_range']
+        x_new = np.linspace(depth_min, depth_max, 500)
+    
+    # Get predictions
+    means, stds = predict_gp_model(gp_result, x_new)
+    
+    # Reshape means and stds appropriately based on number of properties
+    if n_properties == 1:
+        if means.ndim == 0 or means.size == 1:
+            # Single value case - reshape to column vector
+            means = means.reshape(-1, 1)
+            stds = stds.reshape(-1, 1)
+        elif means.ndim == 1:
+            # 1D array case - reshape to column vector
+            means = means.reshape(-1, 1)
+            stds = stds.reshape(-1, 1)
+    else:
+        # For multi-task, ensure means/stds are shaped as (n_predictions, n_properties)
+        if means.ndim == 1:
+            # This happens when predict_gp_model returns flattened array for multitask
+            means = means.reshape(-1, n_properties)
+            stds = stds.reshape(-1, n_properties)
+        elif means.shape[0] == n_properties:
+            # If means is (n_properties, n_predictions), transpose it
+            means = means.T
+            stds = stds.T
+    
+    # Create subplots side by side
+    fig, axes = plt.subplots(1, n_properties, figsize=figsize, sharey=False)
+    
+    # Ensure axes is always a list for consistent indexing
+    if n_properties == 1:
+        axes = [axes]
+    
+    for i, prop in enumerate(property_cols):
+        ax = axes[i]
+        
+        # Plot original training data
+        mask = ~original_train_data[prop].isna()
+        train_depths = original_train_data[depth_col][mask]
+        train_values = original_train_data[prop][mask]
+        ax.scatter(train_depths, train_values, alpha=0.5, s=10, label='Original Training Data', color='red')
+        
+        # Plot GP predictions
+        ax.plot(x_new, means[:, i], label='GP Prediction', color='blue', linewidth=2)
+        
+        # Plot uncertainty bounds
+        ax.fill_between(x_new, 
+                       means[:, i] - 2*stds[:, i], 
+                       means[:, i] + 2*stds[:, i], 
+                       alpha=0.3, color='blue', label='95% Confidence Interval')
+        
+        ax.set_title(prop)
+        ax.set_xlabel(depth_col)
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.show()
