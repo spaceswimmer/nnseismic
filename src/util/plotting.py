@@ -441,3 +441,70 @@ def visualize_multichannel_gp_results_side_by_side(
     
     plt.tight_layout()
     plt.show()
+
+def visualize_single_gp_result(
+    gp_result: dict,
+    property_col: str,
+    original_train_data: pd.DataFrame,
+    depth_col: str = 'DEPTH',
+    x_new: np.ndarray = None,
+    figsize: tuple = (8, 10),
+    log_transform: bool = False,
+    ax: plt.Axes = None
+):
+    """
+    Visualize GP model results for a single property with uncertainty bounds.
+    
+    Args:
+        gp_result: Dictionary containing the fitted GP model from fit_gp_model
+        property_col: Name of the property column to visualize
+        original_train_data: DataFrame containing the original training data
+        depth_col: Name of the depth column (default: 'DEPTH')
+        x_new: Depth values for prediction (if None, generates range from training data)
+        figsize: Figure size tuple (width, height)
+        log_transform: Whether to apply log transform in prediction
+        ax: Existing matplotlib axes to plot on (if None, creates new figure)
+    
+    Returns:
+        fig, ax: The figure and axes objects
+    """
+    # Generate prediction depths if not provided
+    if x_new is None:
+        depth_min, depth_max = gp_result['depth_range']
+        x_new = np.linspace(depth_min, depth_max, 500)
+    
+    # Get predictions
+    mean, std = predict_gp_model(gp_result, x_new, log_transform=log_transform)
+    
+    # Create figure if no axes provided
+    if ax is None:
+        fig, ax = plt.subplots(figsize=figsize)
+    else:
+        fig = ax.figure
+    
+    # Plot original training data
+    mask = ~original_train_data[property_col].isna()
+    train_depths = original_train_data.loc[mask, depth_col]
+    train_values = original_train_data.loc[mask, property_col]
+    ax.scatter(train_values, train_depths, alpha=0.4, s=10, 
+               label='Training Data', color='red', zorder=3)
+    
+    # Plot GP mean prediction
+    ax.plot(mean, x_new, label='GP Prediction', color='blue', 
+            linewidth=2, zorder=2)
+    
+    # Plot 95% confidence interval (±2 standard deviations)
+    ax.fill_betweenx(x_new, mean - 2*std, mean + 2*std, 
+                     alpha=0.3, color='blue', label='95% CI', zorder=1)
+    
+    # Formatting
+    ax.set_xlabel(property_col, fontsize=12)
+    ax.set_ylabel(depth_col, fontsize=12)
+    ax.invert_yaxis()  # Depth increases downward
+    ax.legend(loc='best')
+    ax.grid(True, alpha=0.3)
+    ax.set_title(f'GP Model: {property_col}', fontsize=12, fontweight='bold')
+    
+    plt.tight_layout()
+    
+    return fig, ax
