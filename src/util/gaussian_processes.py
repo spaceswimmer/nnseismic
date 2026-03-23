@@ -157,7 +157,9 @@ def fit_gp_model_all_wells(
     return fit_gp_model(combined_df, property_col, depth_col, **kwargs)
 
 
-def predict_gp_model(gp_result: dict, x_new: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+def predict_gp_model(gp_result: dict,
+                     x_new: np.ndarray,
+                     log_transform: bool = False) -> Tuple[np.ndarray, np.ndarray]:
     """Predict with GP model, handling normalization."""
     model = gp_result['model']
     likelihood = gp_result['likelihood']
@@ -180,5 +182,11 @@ def predict_gp_model(gp_result: dict, x_new: np.ndarray) -> Tuple[np.ndarray, np
     # Denormalize outputs
     mean = scaler_y.inverse_transform(mean_norm).squeeze()
     std = std_norm * scaler_y.scale_
+
+    if log_transform:
+        variance = std ** 2
+        mean_original = np.exp(mean + variance / 2)
+        std_original = np.sqrt((np.exp(variance) - 1) * np.exp(2 * mean + variance))
+        return mean_original, std_original
     
     return mean, std
