@@ -96,7 +96,7 @@ import torch
 from typing import Dict
 
 
-def save_gp_model(gp_result: Dict, filepath: str):
+def save_gp_model(gp_result, filepath):
     """
     Save a GP model and its associated components to a file using PyTorch.
     
@@ -108,24 +108,16 @@ def save_gp_model(gp_result: Dict, filepath: str):
     # Get the hyperparameters from the model
     model = gp_result['model']
     
-    # Extract lengthscale constraint lower bound
-    if hasattr(model.covar_module.base_kernel, 'lengthscale_constraint'):
-        lengthscale_lower_bound = model.covar_module.base_kernel.lengthscale_constraint.lower_bound.item()
-    elif hasattr(model.covar_module, 'data_covar_module'):  # For multitask model
-        lengthscale_lower_bound = model.covar_module.data_covar_module.lengthscale_constraint.lower_bound.item()
-    else:
-        lengthscale_lower_bound = 0.2  # Default fallback
-    
     # Prepare the state dictionary with all necessary parameters
     state_dict = {
         'model_state_dict': model.state_dict(),
         'likelihood_state_dict': gp_result['likelihood'].state_dict(),
         'model_type': type(model).__name__,
         'num_tasks': getattr(model, 'num_tasks', 1),
-        'lengthscale_lower_bound': lengthscale_lower_bound,
         'scaler_x': gp_result['scaler_x'],
         'scaler_y': gp_result['scaler_y'],
-        'depth_range': gp_result['depth_range']
+        'depth_range': gp_result['depth_range'],
+        'lengthscale': gp_result['lengthscale']
     }
     
     # Save the state dictionary
@@ -149,7 +141,7 @@ def load_gp_model(filepath: str):
     # Retrieve stored parameters
     model_type = state_dict['model_type']
     num_tasks = state_dict['num_tasks']
-    lengthscale_lower_bound = state_dict['lengthscale_lower_bound']
+    lengthscale_lower_bound = state_dict['lengthscale']
     
     # Create dummy tensors for initialization
     dummy_x = torch.randn(1, 1, device=DEVICE)

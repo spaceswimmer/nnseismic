@@ -1,9 +1,11 @@
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.widgets import Slider
 from IPython.display import display
 import ipywidgets as widgets
 from typing import Union, List
+from util.gaussian_processes import predict_gp_model
 
 def plot_well_logs(df, columns, well_name=None, figsize=None, depth_range=None):
     """

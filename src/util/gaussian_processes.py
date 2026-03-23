@@ -58,7 +58,7 @@ def fit_gp_model(
     """
     Fit a GP model to depth-property data.
     
-    Returns dict with: 'model', 'likelihood', 'scaler_x', 'scaler_y', 'depth_range'
+    Returns dict with: 'model', 'likelihood', 'scaler_x', 'scaler_y', 'depth_range', 'lengthscale'
     """
     # Extract valid data
     if isinstance(property_col, str):
@@ -81,6 +81,8 @@ def fit_gp_model(
     
     X = data[depth_col].values.reshape(-1, 1)
     y = data[property_col].values
+    if y.ndim == 1:
+        y = y.reshape(-1, 1)
     
     # Use StandardScaler
     scaler_x = StandardScaler()
@@ -122,7 +124,8 @@ def fit_gp_model(
         'likelihood': likelihood,
         'scaler_x': scaler_x,
         'scaler_y': scaler_y,
-        'depth_range': (X.min(), X.max())
+        'depth_range': (X.min(), X.max()),
+        'lengthscale': lengthscale
     }
 
 
