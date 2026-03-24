@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import torch as pt
 import matplotlib.pyplot as plt
 from matplotlib.widgets import Slider
 from IPython.display import display
@@ -355,7 +356,7 @@ def visualize_multichannel_gp_results(
 def visualize_multichannel_gp_results_side_by_side(
     gp_result: dict,
     property_col: Union[str, List[str]],
-    original_train_data: pd.DataFrame,
+    original_train_data: pd.DataFrame = None,
     depth_col: str = 'DEPTH',
     x_new: np.ndarray = None,
     figsize: tuple = (15, 5),
@@ -419,10 +420,17 @@ def visualize_multichannel_gp_results_side_by_side(
     for i, prop in enumerate(property_cols):
         ax = axes[i]
         
-        # Plot original training data
-        mask = ~original_train_data[prop].isna()
-        train_depths = original_train_data[depth_col][mask]
-        train_values = original_train_data[prop][mask]
+        if original_train_data is not None:
+            # Plot original training data
+            mask = ~original_train_data[prop].isna()
+            train_depths = original_train_data[depth_col][mask]
+            train_values = original_train_data[prop][mask]
+        else:
+            train_depths = gp_result['model'].train_inputs[0].cpu()
+            train_values = gp_result['model'].train_targets.cpu()[:, i]
+            if log_transform:
+                train_depths = pt.exp(train_depths)
+                train_values = pt.exp(train_values)
         ax.scatter(train_depths, train_values, alpha=0.5, s=10, label='Original Training Data', color='red')
         
         # Plot GP predictions

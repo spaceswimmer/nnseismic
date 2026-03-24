@@ -88,14 +88,6 @@ def find_viable_arrays(folder_path):
     print(f"\nFound {len(valid_arrays)} arrays with multiple unique values")
     return valid_arrays
 
-import torch
-from typing import Dict
-
-
-import torch
-from typing import Dict
-
-
 def save_gp_model(gp_result: dict, filepath: str) -> None:
     """
     Save GP model and all components needed for prediction.
@@ -107,9 +99,16 @@ def save_gp_model(gp_result: dict, filepath: str) -> None:
     model = gp_result['model']
     num_tasks = model.num_tasks if hasattr(model, 'num_tasks') else 1
     
+    # CRITICAL: Get training data from the model
+    # ExactGP stores train_inputs and train_targets
+    train_x = model.train_inputs[0].cpu()
+    train_y = model.train_targets.cpu()
+    
     torch.save({
         'model_state_dict': model.state_dict(),
         'likelihood_state_dict': gp_result['likelihood'].state_dict(),
+        'train_x': train_x,
+        'train_y': train_y,
         'scaler_x': gp_result['scaler_x'],
         'scaler_y': gp_result['scaler_y'],
         'depth_range': gp_result['depth_range'],
@@ -133,19 +132,19 @@ def load_gp_model(filepath: str) -> dict:
     num_tasks = checkpoint['num_tasks']
     lengthscale = checkpoint['lengthscale']
     
-    # Create dummy tensors for initialization (required by ExactGP)
-    dummy_x = torch.empty(1, 1, device=DEVICE)
-    dummy_y = torch.empty(1, num_tasks, device=DEVICE)
+    # Restore training data - REQUIRED for ExactGP predictions!
+    train_x = checkpoint['train_x'].to(DEVICE)
+    train_y = checkpoint['train_y'].to(DEVICE)
     
-    # Recreate likelihood and model with correct architecture
+    # Recreate likelihood and model with ACTUAL training data
     if num_tasks == 1:
         likelihood = gpytorch.likelihoods.GaussianLikelihood()
-        model = GPModel(dummy_x, dummy_y, likelihood, lengthscale).to(DEVICE)
+        model = GPModel(train_x, train_y, likelihood, lengthscale).to(DEVICE)
     else:
         likelihood = gpytorch.likelihoods.MultitaskGaussianLikelihood(num_tasks=num_tasks)
-        model = MultitaskGPModel(dummy_x, dummy_y, likelihood, lengthscale, num_tasks).to(DEVICE)
+        model = MultitaskGPModel(train_x, train_y, likelihood, lengthscale, num_tasks).to(DEVICE)
     
-    # Load trained weights
+    # Load trained hyperparameters
     model.load_state_dict(checkpoint['model_state_dict'])
     likelihood.load_state_dict(checkpoint['likelihood_state_dict'])
     
@@ -156,4 +155,5 @@ def load_gp_model(filepath: str) -> dict:
         'scaler_y': checkpoint['scaler_y'],
         'depth_range': checkpoint['depth_range'],
         'lengthscale': lengthscale,
+        'num_tasks': num_tasks
     }
