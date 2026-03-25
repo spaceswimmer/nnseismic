@@ -290,15 +290,15 @@ def sample_gp_grid(
     
     Args:
         gp_grid: Dictionary from load_gp_grid_params()
-        z_new: 1D array of depth points OR list of arrays (one per task for multi-task GP)
+        z_new: Array of depth points OR list of arrays (one per task for multi-task GP)
         n_samples: Number of samples to generate
         interpolation: Interpolation method ('linear', 'nearest', 'cubic')
         linear_extrap_funcs: Optional list of functions for values outside grid range.
     
     Returns:
-        For single-task: array of shape (n_samples, len(z_new))
-        For multi-task with single z_new: array of shape (n_samples, len(z_new), num_tasks)
-        For multi-task with list of z_new: array of shape (n_samples, len(z_new[i]), num_tasks)
+        For single-task: array of shape (n_samples, *z_new.shape)
+        For multi-task with single z_new: array of shape (n_samples, *z_new.shape, num_tasks)
+        For multi-task with list of z_new: array of shape (n_samples, z_new[i].shape, num_tasks)
     """
     from scipy.interpolate import interp1d
     
@@ -311,16 +311,19 @@ def sample_gp_grid(
     depth_min = depth_grid.min()
     depth_max = depth_grid.max()
     
-    # Handle z_new input format
+    # Handle z_new input format - flatten all arrays for processing
     if isinstance(z_new, (list, tuple)):
-        z_arrays = [np.asarray(z) for z in z_new]
+        z_arrays = [np.asarray(z).flatten() for z in z_new]
+        z_shapes = [np.asarray(z).shape for z in z_new]
         separate_z_per_task = True
         if num_tasks == 1:
             raise ValueError("Single-task GP only accepts a single z_new array")
         if len(z_arrays) != num_tasks:
             raise ValueError(f"Expected {num_tasks} z arrays, got {len(z_arrays)}")
     else:
-        z_arrays = [np.asarray(z_new)]
+        z_arr_flat = np.asarray(z_new).flatten()
+        z_arrays = [z_arr_flat]
+        z_shapes = [np.asarray(z_new).shape]
         separate_z_per_task = False
     
     # Generate correlated samples on the full grid
@@ -348,6 +351,9 @@ def sample_gp_grid(
             if np.any(out_bounds):
                 samples[:, out_bounds] = linear_extrap_funcs[0](z_arr[out_bounds])
         
+        # Reshape back to original shape
+        samples = samples.reshape((n_samples, *z_shapes[0]))
+        
     else:
         # Multi-task
         samples_grid_flat = mean.flatten() + (L @ z.T).T
@@ -372,10 +378,15 @@ def sample_gp_grid(
                     if np.any(out_bounds):
                         samples[t][:, out_bounds] = linear_extrap_funcs[t](z_arr[out_bounds])
             
-            max_len = max(len(z_arr) for z_arr in z_arrays)
-            samples_stacked = np.zeros((n_samples, max_len, num_tasks))
+            # Reshape each task back to original shape
+            samples_reshaped = [s.reshape((n_samples, *shape)) for s, shape in zip(samples, z_shapes)]
+            
+            # Stack to shape (n_samples, max_size, num_tasks) - for compatibility
+            max_size = max(s.size // n_samples for s in samples)
+            samples_stacked = np.zeros((n_samples, max_size, num_tasks))
             for t in range(num_tasks):
-                samples_stacked[:, :len(z_arrays[t]), t] = samples[t]
+                flat = samples_reshaped[t].reshape(n_samples, -1)
+                samples_stacked[:, :flat.shape[1], t] = flat
             samples = samples_stacked
             
         else:
@@ -394,6 +405,9 @@ def sample_gp_grid(
                     out_bounds = ~in_bounds
                     if np.any(out_bounds):
                         samples[:, out_bounds, t] = linear_extrap_funcs[t](z_arr[out_bounds])
+            
+            # Reshape back to original shape
+            samples = samples.reshape((n_samples, *z_shapes[0], num_tasks))
     
     return samples
 
