@@ -8,6 +8,7 @@ import ipywidgets as widgets
 from typing import Union, List
 from util.gaussian_processes import predict_gp_model
 
+
 def plot_well_logs(df, columns, well_name=None, figsize=None, depth_range=None):
     """
     Plot well log curves from a DataFrame.
@@ -15,7 +16,7 @@ def plot_well_logs(df, columns, well_name=None, figsize=None, depth_range=None):
     Parameters:
     -----------
     df : pandas.DataFrame
-        DataFrame with depth as index and log curves as columns
+        DataFrame with depth column and log curves as other columns
     columns : list
         List of column names to plot
     well_name : str, optional
@@ -45,13 +46,16 @@ def plot_well_logs(df, columns, well_name=None, figsize=None, depth_range=None):
         9: '#800080'     # purple
     }
     
+    # Sort DataFrame by DEPTH column to ensure proper plotting order
+    df_sorted = df.sort_values('DEPTH').reset_index(drop=True)
+    
     # Filter depth range if specified
     if depth_range is not None:
-        df_plot = df.loc[depth_range[0]:depth_range[1]]
+        df_plot = df_sorted[(df_sorted['DEPTH'] >= depth_range[0]) & (df_sorted['DEPTH'] <= depth_range[1])]
     else:
-        df_plot = df
+        df_plot = df_sorted
     
-    depth = df_plot.index.values
+    depth = df_plot['DEPTH'].values
     n_plots = len(columns)
     
     # Create width ratios: marker columns are narrower
