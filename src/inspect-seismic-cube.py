@@ -1,12 +1,12 @@
 import numpy as np
 import util.filehandler as fh
-import util.plotting as draw
+from util.plotting import plot_3d_array_with_slider
 
 def main():
-    cube_path = r"C:\Users\artemiy\Documents\University\Диплом\х Фактические данные\Куб, интерпретация, ГИС\Куб (2015)\Vankorskaya_s_p_5_03-04_Migrirovannyiy_PreStack.sgy"
-    traces, il, xl = fh.read_sgy_selective(cube_path)
-    print(traces[:100,:100,:100])
-    # draw.plot_3d_seismic(traces)
+    folder = "../data/synthetic_data/run/seismic__2026.23045076_tagilsk_test_3/"
+    file = "seismicCubes_RFC_fullstack_2026.23045076.npy"
+    cube = np.load(folder+file, 'r')
+    plot_3d_array_with_slider(cube, axis='x')
 
 if __name__ == "__main__":
     main()

@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import torch as pt
 import matplotlib.pyplot as plt
-from matplotlib.widgets import Slider
+from matplotlib.widgets import Slider, RadioButtons
 from IPython.display import display
 import ipywidgets as widgets
 from typing import Union, List
@@ -191,15 +191,22 @@ def plot_3d_array_interactive(array, axis='z'):
     display(interactive_plot)
 
 
-def plot_3d_array_with_slider(array, axis='z'):
+def plot_3d_array_with_slider(array, axis='z', initial_gain=1.0, norm_mode='global'):
     """
     Alternative implementation using matplotlib sliders for interactivity.
     This approach works well outside of Jupyter as well.
     
     Parameters:
+    -----------
     array (numpy.ndarray): 3D numpy array with shape (x, y, z)
     axis (str): The axis to slice along ('x', 'y', or 'z'). Default is 'z'.
                This determines which dimension will be cycled through.
+    initial_gain (float): Initial gain/amplification factor. Default is 1.0.
+                          Higher values increase contrast (narrower color range).
+    norm_mode (str): Normalization mode. Options:
+                     'none' - No normalization (raw amplitudes)
+                     'global' - Normalize by global max of the slice
+                     'trace' - Normalize each trace (column) by its own max
     """
     if len(array.shape) != 3:
         raise ValueError("Array must be 3-dimensional")
@@ -224,48 +231,93 @@ def plot_3d_array_with_slider(array, axis='z'):
         plot_dims = (0, 1)  # Show x-y plane
         title_axis = 'Z'
     
-    # Set up the figure and axis
+    # Set up the figure with space for widgets
     fig, ax = plt.subplots(figsize=(10, 8))
-    plt.subplots_adjust(bottom=0.25)
+    plt.subplots_adjust(left=0.25, bottom=0.25)
+    
+    # Helper function to get slice data
+    def get_slice_data(idx):
+        if axis == 'x':
+            return array[idx, :, :]
+        elif axis == 'y':
+            return array[:, idx, :]
+        else:  # axis == 'z'
+            return array[:, :, idx]
     
     # Initial slice
     initial_idx = 0
-    if axis == 'x':
-        initial_slice = array[initial_idx, :, :]
-    elif axis == 'y':
-        initial_slice = array[:, initial_idx, :]
-    else:  # axis == 'z'
-        initial_slice = array[:, :, initial_idx]
+    initial_slice = get_slice_data(initial_idx)
     
-    im = ax.imshow(initial_slice, aspect='auto', cmap='viridis')
-    ax.set_title(f'{title_axis}-slice at index {initial_idx}')
-    fig.colorbar(im, ax=ax)
+    # Apply initial normalization
+    def apply_normalization(data, mode):
+        if mode == 'global':
+            max_val = np.max(np.abs(data))
+            if max_val > 0:
+                return data / max_val
+            return data
+        elif mode == 'trace':
+            # Normalize each column (trace) by its max - axis=0 normalizes columns
+            trace_max = np.max(np.abs(data), axis=0, keepdims=True)
+            trace_max[trace_max == 0] = 1  # Avoid division by zero
+            return data / trace_max
+        else:  # 'none'
+            return data
     
-    # Create slider axes
-    ax_slider = plt.axes([0.2, 0.1, 0.5, 0.03])
-    slider = Slider(ax_slider, f'{title_axis}-index', 0, slice_idx_max - 1, valinit=initial_idx, valfmt='%d')
+    # Initial plot
+    data_normalized = apply_normalization(initial_slice, norm_mode)
+    vmax = np.max(np.abs(data_normalized)) / initial_gain
+    vmin = -vmax
+    
+    im = ax.imshow(data_normalized, aspect='auto', cmap='gray', vmin=vmin, vmax=vmax)
+    ax.set_title(f'{title_axis}-slice at index {initial_idx} | Gain: {initial_gain:.1f}x | Norm: {norm_mode}')
+    cbar = fig.colorbar(im, ax=ax)
+    
+    # Create slice index slider
+    ax_slider = plt.axes([0.25, 0.15, 0.65, 0.03])
+    slider = Slider(ax_slider, f'{title_axis}-index', 0, slice_idx_max - 1, 
+                    valinit=initial_idx, valfmt='%d')
+    
+    # Create gain slider
+    ax_gain = plt.axes([0.25, 0.06, 0.65, 0.03])
+    gain_slider = Slider(ax_gain, 'Gain', 0.1, 100.0, valinit=initial_gain, valfmt='%.1fx')
+    
+    # Create normalization radio buttons
+    ax_radio = plt.axes([0.02, 0.3, 0.15, 0.15])
+    radio = RadioButtons(ax_radio, ('none', 'global', 'trace'), active=0 if norm_mode == 'none' else (1 if norm_mode == 'global' else 2))
     
     # Define update function
     def update(val):
         idx = int(slider.val)
-        ax.clear()
-        if axis == 'x':
-            slice_data = array[idx, :, :]
-        elif axis == 'y':
-            slice_data = array[:, idx, :]
-        else:  # axis == 'z'
-            slice_data = array[:, :, idx]
-            
-        im = ax.imshow(slice_data, aspect='auto', cmap='viridis')
-        ax.set_title(f'{title_axis}-slice at index {idx}')
-        fig.canvas.draw()
+        gain = gain_slider.val
+        
+        # Get the selected normalization mode from radio buttons
+        selected_norm = radio.value_selected
+        
+        # Get fresh slice data
+        slice_data = get_slice_data(idx)
+        
+        # Apply normalization
+        data_normalized = apply_normalization(slice_data, selected_norm)
+        
+        # Calculate color limits based on gain
+        vmax = np.max(np.abs(data_normalized)) / gain
+        vmin = -vmax
+        
+        # Update image
+        im.set_data(data_normalized)
+        im.set_clim(vmin=vmin, vmax=vmax)
+        
+        ax.set_title(f'{title_axis}-slice at index {idx} | Gain: {gain:.1f}x | Norm: {selected_norm}')
+        fig.canvas.draw_idle()
     
-    # Connect slider to update function
+    # Connect widgets to update function
     slider.on_changed(update)
+    gain_slider.on_changed(update)
+    radio.on_clicked(update)
     
     plt.show()
     
-    return fig, slider
+    return fig, slider, gain_slider, radio
 
 def visualize_multichannel_gp_results(
     gp_result: dict,

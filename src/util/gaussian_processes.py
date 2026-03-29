@@ -5,6 +5,8 @@ import pandas as pd
 from tqdm import tqdm
 from sklearn.preprocessing import StandardScaler
 from typing import Dict, List, Optional, Tuple, Union
+from numpy.polynomial.chebyshev import Chebyshev
+import json
 
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -482,3 +484,152 @@ def predict_gp_grid(
             return mean_original, std_original
         
         return mean_interp, std_interp
+    
+def fast_chebyshev_evaluate(
+    cheb_params: dict,
+    x_new: np.ndarray,
+    return_std: bool = True
+):
+    """
+    Fast evaluation using pre-fit Chebyshev polynomials.
+    
+    Args:
+        cheb_params: Dict from fit_chebyshev_approximation
+        x_new: Depth values to evaluate at
+        return_std: Whether to also return std values
+    
+    Returns:
+        For single-task: mean array, or (mean, std) if return_std=True
+        For multi-task: mean array of shape (len(x_new), num_tasks)
+    """
+    domain = cheb_params['domain']
+    num_tasks = cheb_params['num_tasks']
+    x_new = np.asarray(x_new)
+    
+    # Evaluate all tasks
+    mean = np.zeros((len(x_new), num_tasks))
+    
+    for task_idx in range(num_tasks):
+        mean_cheb = Chebyshev(cheb_params['mean_coeffs'][task_idx], domain=domain)
+        mean[:, task_idx] = mean_cheb(x_new)
+    
+    if not return_std:
+        # Return 1D for single-task, 2D for multi-task
+        return mean.squeeze()
+    
+    std = np.zeros((len(x_new), num_tasks))
+    for task_idx in range(num_tasks):
+        std_cheb = Chebyshev(cheb_params['std_coeffs'][task_idx], domain=domain)
+        std[:, task_idx] = np.maximum(std_cheb(x_new), 1e-6)
+    
+    # Return shapes consistent with input dimensionality
+    if cheb_params.get('log_transform', False):
+        variance = std ** 2
+        mean_original = np.exp(mean + variance/2)
+        std_original = np.sqrt((np.exp(variance) - 1) * np.exp(2 * mean + variance))
+        return mean_original, std_original
+    return mean.squeeze(), std.squeeze()
+
+def fit_chebyshev_approximation(
+    gp_result: dict,
+    degree: int = 10,
+    n_grid_points: int = 200,
+    n_samples: int = 50,
+    log_transform: bool = False
+) -> dict:
+    """
+    Fit Chebyshev polynomial approximation to GP model.
+    Handles both single-task and multi-task GP models.
+    
+    Args:
+        gp_result: Result dict from fit_gp_model
+        degree: Chebyshev polynomial degree (higher = more flexible)
+        n_grid_points: Number of points to evaluate GP on
+        n_samples: Number of samples for computing mean/std
+        log_transform: Whether to apply log transform
+    
+    Returns:
+        Dict with Chebyshev coefficients and metadata
+    """
+    depth_min, depth_max = gp_result['depth_range']
+    depth_grid = np.linspace(depth_min, depth_max, n_grid_points)
+    num_tasks = gp_result['num_tasks']
+    
+    # Generate samples from GP
+    samples = sample_gp_model(
+        gp_result, depth_grid, 
+        n_samples=n_samples, 
+        log_transform=False
+    )
+    
+    # samples shape: (n_samples, n_grid_points) for single-task
+    #              or (n_samples, n_grid_points, num_tasks) for multi-task
+    
+    # Normalize to always have 3D shape
+    if num_tasks == 1:
+        samples = samples.reshape(n_samples, n_grid_points, 1)
+    
+    # Compute statistics across samples for each task
+    mean_values = samples.mean(axis=0)  # shape: (n_grid_points, num_tasks)
+    std_values = samples.std(axis=0)    # shape: (n_grid_points, num_tasks)
+    
+    # Fit separate Chebyshev polynomial for each task
+    mean_coeffs = []
+    std_coeffs = []
+    
+    for task_idx in range(num_tasks):
+        mean_cheb = Chebyshev.fit(
+            depth_grid, mean_values[:, task_idx], 
+            deg=degree, domain=[depth_min, depth_max]
+        )
+        std_cheb = Chebyshev.fit(
+            depth_grid, std_values[:, task_idx], 
+            deg=degree, domain=[depth_min, depth_max]
+        )
+        mean_coeffs.append(mean_cheb.coef.tolist())
+        std_coeffs.append(std_cheb.coef.tolist())
+    
+    return {
+        'mean_coeffs': mean_coeffs,  # List of coefficient arrays, one per task
+        'std_coeffs': std_coeffs,    # List of coefficient arrays, one per task
+        'domain': [float(depth_min), float(depth_max)],
+        'degree': degree,
+        'n_grid_points': n_grid_points,
+        'n_samples': n_samples,
+        'log_transform': log_transform,
+        'num_tasks': num_tasks
+    }
+
+def fast_chebyshev_sample(
+    cheb_params: dict,
+    x_new: np.ndarray,
+    n_samples: int = 1
+) -> np.ndarray:
+    """
+    Fast sampling using pre-fit Chebyshev polynomials.
+    
+    Args:
+        cheb_params: Dict from fit_chebyshev_approximation
+        x_new: Depth values to sample at
+        n_samples: Number of samples to generate
+    
+    Returns:
+        For single-task: array of shape (n_samples, len(x_new))
+        For multi-task: array of shape (n_samples, len(x_new), num_tasks)
+    """
+    x_new = np.asarray(x_new)
+    mean, std = fast_chebyshev_evaluate(cheb_params, x_new, return_std=True)
+    
+    num_tasks = cheb_params['num_tasks']
+    
+    # Generate samples: mean + std * noise
+    if num_tasks == 1:
+        samples = mean + std * np.random.randn(n_samples, len(x_new))
+    else:
+        # mean, std have shape (len(x_new), num_tasks)
+        samples = mean + std * np.random.randn(n_samples, len(x_new), num_tasks)
+    
+    # if cheb_params.get('log_transform', False):
+    #     samples = np.exp(samples)
+    
+    return samples

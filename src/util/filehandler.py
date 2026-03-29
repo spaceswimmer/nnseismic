@@ -2,6 +2,7 @@ import sys
 import os
 import gc
 import numpy as np
+import json
 import lasio as las
 from typing import Dict
 # Add the parent directory to the system path
@@ -298,3 +299,28 @@ def load_gp_grid_params(filepath: str) -> dict:
         'scaler_y_mean': data.get('scaler_y_mean', None),
         'scaler_y_scale': data.get('scaler_y_scale', None)
     }
+
+def save_chebyshev_approximation(cheb_params: dict, filepath: str) -> None:
+    """
+    Save Chebyshev parameters to JSON file.
+    
+    Args:
+        cheb_params: Dict from fit_chebyshev_approximation
+        filepath: Path to save JSON file
+    """
+    with open(filepath, 'w') as f:
+        json.dump(cheb_params, f, indent=2)
+
+
+def load_chebyshev_approximation(filepath: str) -> dict:
+    """
+    Load Chebyshev parameters from JSON file.
+    
+    Args:
+        filepath: Path to JSON file
+    
+    Returns:
+        Dict with Chebyshev parameters
+    """
+    with open(filepath, 'r') as f:
+        return json.load(f)
