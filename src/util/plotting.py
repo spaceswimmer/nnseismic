@@ -169,7 +169,7 @@ def plot_3d_array_interactive(array, axis='z'):
         else:  # axis == 'z'
             slice_data = array[:, :, idx]
             
-        plt.imshow(slice_data, aspect='auto', cmap='viridis')
+        plt.imshow(slice_data, aspect='auto', cmap='grey')
         plt.title(f'{title_axis}-slice at index {idx}')
         plt.colorbar()
         plt.show()
@@ -191,7 +191,7 @@ def plot_3d_array_interactive(array, axis='z'):
     display(interactive_plot)
 
 
-def plot_3d_array_with_slider(array, axis='z', initial_gain=1.0, norm_mode='global'):
+def plot_3d_array_with_slider(array, axis='z', initial_gain=1.0, norm_mode='global', savepath=None):
     """
     Alternative implementation using matplotlib sliders for interactivity.
     This approach works well outside of Jupyter as well.
@@ -314,7 +314,8 @@ def plot_3d_array_with_slider(array, axis='z', initial_gain=1.0, norm_mode='glob
     slider.on_changed(update)
     gain_slider.on_changed(update)
     radio.on_clicked(update)
-    
+    if savepath != None:
+        plt.savefig(savepath)
     plt.show()
     
     return fig, slider, gain_slider, radio

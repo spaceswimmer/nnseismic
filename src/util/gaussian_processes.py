@@ -495,40 +495,49 @@ def fast_chebyshev_evaluate(
     
     Args:
         cheb_params: Dict from fit_chebyshev_approximation
-        x_new: Depth values to evaluate at
+        x_new: Depth values to evaluate at (can be any shape)
         return_std: Whether to also return std values
     
     Returns:
         For single-task: mean array, or (mean, std) if return_std=True
-        For multi-task: mean array of shape (len(x_new), num_tasks)
+        For multi-task: mean array of shape (*x_new.shape, num_tasks)
     """
     domain = cheb_params['domain']
     num_tasks = cheb_params['num_tasks']
     x_new = np.asarray(x_new)
+    original_shape = x_new.shape
+    
+    # Flatten the input for evaluation, then reshape back
+    x_flat = x_new.ravel()
     
     # Evaluate all tasks
-    mean = np.zeros((len(x_new), num_tasks))
+    mean = np.zeros((len(x_flat), num_tasks))
     
     for task_idx in range(num_tasks):
         mean_cheb = Chebyshev(cheb_params['mean_coeffs'][task_idx], domain=domain)
-        mean[:, task_idx] = mean_cheb(x_new)
+        mean[:, task_idx] = mean_cheb(x_flat)
     
     if not return_std:
-        # Return 1D for single-task, 2D for multi-task
-        return mean.squeeze()
+        # Reshape to (*original_shape, num_tasks)
+        result_shape = original_shape if num_tasks == 1 else (*original_shape, num_tasks)
+        return mean.reshape(result_shape)
     
-    std = np.zeros((len(x_new), num_tasks))
+    std = np.zeros((len(x_flat), num_tasks))
     for task_idx in range(num_tasks):
         std_cheb = Chebyshev(cheb_params['std_coeffs'][task_idx], domain=domain)
-        std[:, task_idx] = np.maximum(std_cheb(x_new), 1e-6)
+        std[:, task_idx] = np.maximum(std_cheb(x_flat), 1e-6)
     
-    # Return shapes consistent with input dimensionality
+    # Reshape to (*original_shape, num_tasks)
+    mean = mean.reshape(*original_shape, num_tasks)
+    std = std.reshape(*original_shape, num_tasks)
+    
     if cheb_params.get('log_transform', False):
         variance = std ** 2
         mean_original = np.exp(mean + variance/2)
         std_original = np.sqrt((np.exp(variance) - 1) * np.exp(2 * mean + variance))
         return mean_original, std_original
-    return mean.squeeze(), std.squeeze()
+    
+    return mean, std
 
 def fit_chebyshev_approximation(
     gp_result: dict,
