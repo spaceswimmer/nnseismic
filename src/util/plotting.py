@@ -128,7 +128,7 @@ def plot_well_logs(df, columns, well_name=None, figsize=None, depth_range=None):
     plt.tight_layout()
     return fig, axes
 
-def plot_3d_array_interactive(array, axis='z'):
+def plot_3d_array_interactive(array, axis='z', cmap='grey'):
     """
     Plot a 3D numpy array interactively in a Jupyter notebook.
     
@@ -163,13 +163,13 @@ def plot_3d_array_interactive(array, axis='z'):
     def update_plot(idx):
         plt.figure(figsize=(8, 6))
         if axis == 'x':
-            slice_data = array[idx, :, :]
+            slice_data = array[idx, :, :].T
         elif axis == 'y':
-            slice_data = array[:, idx, :]
+            slice_data = array[:, idx, :].T
         else:  # axis == 'z'
             slice_data = array[:, :, idx]
             
-        plt.imshow(slice_data, aspect='auto', cmap='grey')
+        plt.imshow(slice_data, aspect='auto', cmap=cmap)
         plt.title(f'{title_axis}-slice at index {idx}')
         plt.colorbar()
         plt.show()
