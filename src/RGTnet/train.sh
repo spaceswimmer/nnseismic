@@ -1,0 +1,18 @@
+CUDA_VISIBLE_DEVICES=0,1,2,3 python train.py \
+--dataroot datasets/syn_training \
+--lr 0.001 \
+--shape 256 256 128 \
+--batch_size 4 \
+--dataset_size 200 \
+--nepochs 181 \
+--num_workers 4 \
+--lr_patience 2 \
+--lr_factor 0.5 \
+--loss_type SSIM \
+--data_augmentation n \
+--history_interval 20 \
+--checkpoint_interval 10 \
+--valid y \
+--dataroot_val datasets/syn_testing \
+--dataset_size_val 20 \
+--valid_interval 10
