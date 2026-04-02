@@ -1,6 +1,7 @@
 data/synthetic_data/
 data/vankor-3d/
 data/grids/*.npz
+data/DNN models/.logs
 litr/*
 *.npy
 *.las

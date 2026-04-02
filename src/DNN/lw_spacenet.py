@@ -7,8 +7,7 @@ from torch.utils.data import DataLoader
 from sklearn.model_selection import train_test_split
 import numpy as np
 import os
-
-
+from torch.utils.tensorboard import SummaryWriter  # Added import
 
 class SeismicDataset(Dataset):
     """
@@ -18,7 +17,9 @@ class SeismicDataset(Dataset):
         seismic_data (list or array): List of seismic data arrays (numpy arrays of size 128x128x128)
         rgt_data (list or array): List of relative geological time arrays (same dimensions as seismic)
     """
-    def __init__(self, seismic_data, rgt_data):
+    def __init__(self, seismic_data, rgt_data, augm=True):
+        if augm:
+            seismic_data, rgt_data = self._augment_data(seismic_data, rgt_data)
         self.seismic_data = [torch.tensor(arr).bfloat16() if not isinstance(arr, torch.Tensor) else arr.bfloat16() for arr in seismic_data]
         self.rgt_data = [torch.tensor(arr).bfloat16() if not isinstance(arr, torch.Tensor) else arr.bfloat16() for arr in rgt_data]
 
@@ -29,45 +30,104 @@ class SeismicDataset(Dataset):
         seismic = self.seismic_data[idx].unsqueeze(0)  # Add channel dimension
         rgt = self.rgt_data[idx].unsqueeze(0)  # Add channel dimension
         return seismic, rgt
+    
+    @staticmethod
+    def _flip_axis(data, axis, reverse_sign=False):
+        """Flip data along specified axis. Optionally reverse sign."""
+        flipped = np.flip(data, axis=axis)
+        if reverse_sign:
+            return -flipped
+        return flipped
+    
+    def _augment_data(self, seismic_data, rgt_data):
+        augmented_seismic = []
+        augmented_rgt = []
+        
+        for seismic, rgt in zip(seismic_data, rgt_data):
+            # Each seismic/rgt is shape (128, 128, 128) - axes 0, 1, 2 only
+            
+            # 1. Original
+            augmented_seismic.append(seismic)
+            augmented_rgt.append(rgt)
+            
+            # 2. X-flip (axis=0)
+            augmented_seismic.append(self._flip_axis(seismic, axis=0))
+            augmented_rgt.append(self._flip_axis(rgt, axis=0))
+            
+            # 3. Y-flip (axis=1)
+            augmented_seismic.append(self._flip_axis(seismic, axis=1))
+            augmented_rgt.append(self._flip_axis(rgt, axis=1))
+            
+            # 4. Z-flip (axis=2, RGT sign reversed)
+            augmented_seismic.append(self._flip_axis(seismic, axis=2))
+            augmented_rgt.append(self._flip_axis(rgt, axis=2, reverse_sign=True))
+        
+        return np.stack(augmented_seismic), np.stack(augmented_rgt)
+
 
 class UNet3D(nn.Module):
-    def __init__(self, in_channels=1, out_channels=1, init_features=16):
+    def __init__(self, in_channels=1, out_channels=1, init_features=16,
+                 smoothing_kernel_size=5):
         super(UNet3D, self).__init__()
 
         features = init_features
         # Encoder (downsampling path)
         self.encoder1 = UNet3D._block(in_channels, features, name="enc1")
-        self.pool1 = nn.MaxPool3d(kernel_size=2, stride=2)
+        self.pool1 = nn.AvgPool3d(kernel_size=2, stride=2)
         self.encoder2 = UNet3D._block(features, features*2, name="enc2")
-        self.pool2 = nn.MaxPool3d(kernel_size=2, stride=2)
+        self.pool2 = nn.AvgPool3d(kernel_size=2, stride=2)
         self.encoder3 = UNet3D._block(features*2, features*4, name="enc3")
-        self.pool3 = nn.MaxPool3d(kernel_size=2, stride=2)
+        self.pool3 = nn.AvgPool3d(kernel_size=2, stride=2)
         self.encoder4 = UNet3D._block(features*4, features*8, name="enc4")
-        self.pool4 = nn.MaxPool3d(kernel_size=2, stride=2)
+        self.pool4 = nn.AvgPool3d(kernel_size=2, stride=2)
 
         # Bottleneck
         self.bottleneck = UNet3D._block(features*8, features*16, name="bottleneck")
 
-        # Decoder (upsampling path)
-        self.upconv4 = nn.ConvTranspose3d(
-            features*16, features*8, kernel_size=2, stride=2
+        # Decoder (upsampling path) - Replaced ConvTranspose3d with Upsample + Conv3d
+        self.upconv4 = nn.Sequential(
+            nn.Upsample(scale_factor=2, mode="trilinear", align_corners=False),
+            nn.Conv3d(features*16, features*8, kernel_size=3, padding=1, bias=False),
+            nn.GroupNorm(num_groups=8, num_channels=features*8),
+            nn.ReLU(inplace=True),
         )
         self.decoder4 = UNet3D._block((features*8)*2, features*8, name="dec4")
-        self.upconv3 = nn.ConvTranspose3d(
-            features*8, features*4, kernel_size=2, stride=2
+        
+        self.upconv3 = nn.Sequential(
+            nn.Upsample(scale_factor=2, mode="trilinear", align_corners=False),
+            nn.Conv3d(features*8, features*4, kernel_size=3, padding=1, bias=False),
+            nn.GroupNorm(num_groups=8, num_channels=features*4),
+            nn.ReLU(inplace=True),
         )
         self.decoder3 = UNet3D._block((features*4)*2, features*4, name="dec3")
-        self.upconv2 = nn.ConvTranspose3d(
-            features*4, features*2, kernel_size=2, stride=2
+        
+        self.upconv2 = nn.Sequential(
+            nn.Upsample(scale_factor=2, mode="trilinear", align_corners=False),
+            nn.Conv3d(features*4, features*2, kernel_size=3, padding=1, bias=False),
+            nn.GroupNorm(num_groups=8, num_channels=features*2),
+            nn.ReLU(inplace=True),
         )
         self.decoder2 = UNet3D._block((features*2)*2, features*2, name="dec2")
-        self.upconv1 = nn.ConvTranspose3d(
-            features*2, features, kernel_size=2, stride=2
+        
+        self.upconv1 = nn.Sequential(
+            nn.Upsample(scale_factor=2, mode="trilinear", align_corners=False),
+            nn.Conv3d(features*2, features, kernel_size=3, padding=1, bias=False),
+            nn.GroupNorm(num_groups=8, num_channels=features),
+            nn.ReLU(inplace=True),
         )
         self.decoder1 = UNet3D._block(features*2, features, name="dec1")
-
         # Output layer
         self.outconv = nn.Conv3d(in_channels=features, out_channels=out_channels, kernel_size=1)
+        # Smothing layer
+        self.smooth_conv = nn.Sequential(
+                nn.Conv3d(
+                    in_channels=out_channels,
+                    out_channels=out_channels,
+                    kernel_size=smoothing_kernel_size,
+                    padding=smoothing_kernel_size // 2,  # Same padding
+                    bias=False,
+                ),
+            )
 
     def forward(self, x):
         # Encoder
@@ -98,11 +158,13 @@ class UNet3D(nn.Module):
 
         # Output
         out = self.outconv(dec1)
-        return out
+        # Smothing
+        out_smth = self.smooth_conv(out)
+        return out_smth
 
     @staticmethod
     def _block(in_channels, features, name):
-        """Basic convolutional block: Conv3d -> BatchNorm -> ReLU"""
+        """Basic convolutional block: Conv3d -> GroupNorm -> ReLU"""
         return nn.Sequential(
             nn.Conv3d(
                 in_channels=in_channels,
@@ -111,7 +173,7 @@ class UNet3D(nn.Module):
                 padding=1,
                 bias=False,
             ),
-            nn.BatchNorm3d(num_features=features),
+            nn.GroupNorm(num_groups=8, num_channels=features),
             nn.ReLU(inplace=True),
             nn.Conv3d(
                 in_channels=features,
@@ -120,23 +182,25 @@ class UNet3D(nn.Module):
                 padding=1,
                 bias=False,
             ),
-            nn.BatchNorm3d(num_features=features),
+            nn.GroupNorm(num_groups=8, num_channels=features),
             nn.ReLU(inplace=True),
         )
     
 
-
 class SeismicTrainer:
-    def __init__(self, model, train_loader, val_loader, device='cuda'):
+    def __init__(self, model, train_loader, val_loader, device='cuda',
+                 log_dir='./logs', tv_loss_weight=0.01):
         # Convert model to bfloat16
         self.model = model.to(device).bfloat16()
         self.train_loader = train_loader
         self.val_loader = val_loader
         self.device = device
         
-        # Define loss function and optimizer
-        # Ensure loss function works with bfloat16 tensors
+        # Initialize TensorBoard writer
+        self.writer = SummaryWriter(log_dir=log_dir)
+        
         self.criterion = nn.MSELoss()
+        self.tv_loss_weight = tv_loss_weight
         # Convert optimizer to work with bfloat16 model
         self.optimizer = optim.Adam(model.parameters(), lr=1e-4)
         
@@ -148,10 +212,27 @@ class SeismicTrainer:
         # Track training history
         self.train_losses = []
         self.val_losses = []
+    
+    def total_variation_loss(self, outputs, epsilon=1e-8):
+        """
+        Compute 3D total variation loss to encourage smooth outputs.
+        Computes TV separately for each dimension and sums them.
+        """
+        # TV along X dimension (axis 2)
+        tv_x = torch.mean(torch.abs(outputs[:, :, :-1, :, :] - outputs[:, :, 1:, :, :]))
+        
+        # TV along Y dimension (axis 3)
+        tv_y = torch.mean(torch.abs(outputs[:, :, :, :-1, :] - outputs[:, :, :, 1:, :]))
+        
+        # TV along Z dimension (axis 4)
+        tv_z = torch.mean(torch.abs(outputs[:, :, :, :, :-1] - outputs[:, :, :, :, 1:]))
+        
+        return tv_x + tv_y + tv_z
 
-    def train_epoch(self):
+    def train_epoch(self, epoch):
         self.model.train()
         running_loss = 0.0
+        batch_count = 0
         
         for batch_idx, (seismic, rgt) in enumerate(self.train_loader):
             # Ensure data is moved to device with correct dtype
@@ -162,37 +243,62 @@ class SeismicTrainer:
             
             # Forward pass
             outputs = self.model(seismic)
-            loss = self.criterion(outputs, rgt)
+            mse_loss = self.criterion(outputs, rgt)
+            
+            # Add total variation regularization (NEW)
+            tv_loss = self.total_variation_loss(outputs)
+            loss = mse_loss + self.tv_loss_weight * tv_loss
             
             # Backward pass
             loss.backward()
             self.optimizer.step()
             
             running_loss += loss.item()
+            batch_count += 1
+            
+            # Log training loss for each batch
+            global_step = epoch * len(self.train_loader) + batch_idx
+            # Log both losses (NEW)
+            self.writer.add_scalar('Train/MSE_Loss', mse_loss.item(), global_step)
+            self.writer.add_scalar('Train/TV_Loss', tv_loss.item(), global_step)
             
             # Print progress every 10 batches
-            if batch_idx % 10 == 0:
+            if batch_idx % 5 == 0:
                 print(f'Batch {batch_idx}/{len(self.train_loader)}, Loss: {loss.item():.6f}')
         
-        epoch_loss = running_loss / len(self.train_loader)
+        epoch_loss = running_loss / batch_count
         return epoch_loss
 
-    def validate(self):
+    def validate(self, epoch):
         self.model.eval()
-        running_loss = 0.0
+        running_total_loss = 0.0
+        running_mse_loss = 0.0
+        running_tv_loss = 0.0
+        batch_count = 0
         
         with torch.no_grad():
-            for seismic, rgt in self.val_loader:
+            for batch_idx, (seismic, rgt) in enumerate(self.val_loader):
                 # Ensure data is moved to device with correct dtype
                 seismic, rgt = seismic.to(self.device), rgt.to(self.device)
                 
                 outputs = self.model(seismic)
-                loss = self.criterion(outputs, rgt)
+                mse_loss = self.criterion(outputs, rgt)
+                tv_loss = self.total_variation_loss(outputs)
+                total_loss = mse_loss + self.tv_loss_weight * tv_loss
                 
-                running_loss += loss.item()
+                running_total_loss += total_loss.item()
+                running_mse_loss += mse_loss.item()
+                running_tv_loss += tv_loss.item()
+                batch_count += 1
+                
+                # Log validation loss for each batch
+                global_step = epoch * len(self.val_loader) + batch_idx
+                self.writer.add_scalar('Validation/Total_Loss', total_loss.item(), global_step)
+                self.writer.add_scalar('Validation/MSE_Loss', mse_loss.item(), global_step)
+                self.writer.add_scalar('Validation/TV_Loss', tv_loss.item(), global_step)
         
-        epoch_loss = running_loss / len(self.val_loader)
-        return epoch_loss
+        epoch_total_loss = running_total_loss / batch_count
+        return epoch_total_loss
 
     def train(self, num_epochs, save_dir='./checkpoints'):
         os.makedirs(save_dir, exist_ok=True)
@@ -206,15 +312,20 @@ class SeismicTrainer:
             print('-' * 30)
             
             # Train
-            train_loss = self.train_epoch()
+            train_loss = self.train_epoch(epoch)
             self.train_losses.append(train_loss)
             
             # Validate
-            val_loss = self.validate()
+            val_loss = self.validate(epoch)
             self.val_losses.append(val_loss)
             
             # Update learning rate based on validation loss
             self.scheduler.step(val_loss)
+            
+            # Log epoch losses to TensorBoard
+            self.writer.add_scalar('Train/Loss', train_loss, epoch)
+            self.writer.add_scalar('Validation/Loss', val_loss, epoch)
+            self.writer.add_scalar('Learning_Rate', self.optimizer.param_groups[0]['lr'], epoch)
             
             print(f'Train Loss: {train_loss:.6f}')
             print(f'Val Loss: {val_loss:.6f}')
@@ -239,6 +350,9 @@ class SeismicTrainer:
                 print(f'Early stopping triggered after {patience} epochs without improvement.')
                 break
         
+        # Close TensorBoard writer
+        self.writer.close()
+        
         # Save final model
         torch.save({
             'epoch': epoch,
@@ -258,7 +372,6 @@ class SeismicTrainer:
         self.model.load_state_dict(checkpoint['model_state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         print(f"Loaded model from {checkpoint_path}")
-
 
 def create_data_loaders(dataset, batch_size=1, val_split=0.2, shuffle=True):
     """
@@ -287,11 +400,9 @@ def create_data_loaders(dataset, batch_size=1, val_split=0.2, shuffle=True):
     
     return train_loader, val_loader
 
-
 def count_parameters(model):
     """Count the number of trainable parameters in a model."""
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
-
 
 if __name__ == "__main__":
     # Test the model with sample input

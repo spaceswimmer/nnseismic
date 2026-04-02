@@ -11,8 +11,8 @@ def load_model(checkpoint_path, device='cuda'):
     
     model = UNet3D(in_channels=1, out_channels=1, init_features=16)
     checkpoint = torch.load(checkpoint_path, map_location=device)
-    model.load_state_dict(checkpoint['model_state_dict'])
     model = model.bfloat16().to(device)
+    model.load_state_dict(checkpoint['model_state_dict'])
     model.eval()
     
     return model, device
@@ -96,28 +96,28 @@ def slice_data_chunks_with_stride(data, chunk_size=(128, 128, 128), stride=None)
     del chunks[0:3]
     return chunks
 
-def robust_normalize_seismic(chunk, p_min=1, p_max=99):
-    """Robust normalization using percentiles for seismic [-1, 1]"""
-    q_min, q_max = np.percentile(chunk, [p_min, p_max])
-    if q_max == q_min:
-        return np.zeros_like(chunk)
-    # Scale to [-1, 1] using robust percentiles
-    normalized = 2 * (chunk - q_min) / (q_max - q_min) - 1
-    # Optional: clip remaining outliers beyond the percentile range
-    return np.clip(normalized, -1, 1)
+def normalize_seismic(seismic):
+    """Normalize seismic to [0, 1] using min-max."""
+    min_val = np.min(seismic)
+    max_val = np.max(seismic)
+    if max_val - min_val == 0:
+        return np.zeros_like(seismic)
+    return (seismic - min_val) / (max_val - min_val)
 
-def normalize_age_chunk(chunk):
-    """Normalize age data to [0, 1] range within chunk"""
-    min_val, max_val = chunk.min(), chunk.max()
-    if max_val == min_val:  # Avoid division by zero
-        return np.zeros_like(chunk)
-    normalized = (chunk - min_val) / (max_val - min_val)
+def normalize_rgt(rgt):
+    """Normalize RGT by mean and std."""
+    mean_val = np.mean(rgt)
+    std_val = np.std(rgt)
+    if std_val == 0:
+        return np.zeros_like(rgt)
+    normalized = (rgt - mean_val) / std_val
+    # Clamp values to [-1, 1] after standardization
     return normalized
 
 
 if __name__ == "__main__":
     # Load model
-    model, device = load_model('../../data/DNN models/final_model.pth')
+    model, device = load_model('../../data/DNN models/run-20260402_205344/final_model.pth')
     
     seismic = glob("../../data/synthetic_data/run/*150-150-2000*/seismicCubes_cumsum_fullstack*.npy")
     age = glob("../../data/synthetic_data/run/*150-150-2000*/faulted_age*.npy")
@@ -125,21 +125,21 @@ if __name__ == "__main__":
     age_chunk = []
     for s, a in zip(seismic, age):
         sdf = np.load(s)
-        sdf_norm = robust_normalize_seismic(sdf)
+        sdf_norm = normalize_seismic(sdf)
         adf = np.load(a)
         seis_chunk_norm.extend(slice_data_chunks_with_stride(sdf_norm))
         age_chunk.extend(slice_data_chunks_with_stride(adf))
     age_chunk_norm = []
     for chunk in age_chunk:
-        age_chunk_norm.append(normalize_age_chunk(chunk))
+        age_chunk_norm.append(normalize_rgt(chunk))
 
-    seismic = torch.tensor(seis_chunk_norm[10], dtype=torch.bfloat16) 
+    seismic = torch.tensor(seis_chunk_norm[30], dtype=torch.bfloat16) 
     predicted_rgt = predict(model, seismic, device)
     
-    fig, axs = plt.subplots(1, 2)
-    axs[0].imshow(predicted_rgt[50].T)
-    im = axs[1].imshow(age_chunk_norm[10][50].T)
-    fig.colorbar(im)
+    fig, axs = plt.subplots(1, 3)
+    axs[0].imshow(predicted_rgt[50].T)  
+    im = axs[1].imshow(age_chunk_norm[30][50].T)
+    im3 = axs[2].imshow(seis_chunk_norm[30][50].T)
     print(model)
     plt.show()
     
