@@ -117,7 +117,7 @@ def normalize_age_chunk(chunk):
 
 if __name__ == "__main__":
     # Load model
-    model, device = load_model('../../data/DNN models/best_model.pth')
+    model, device = load_model('../../data/DNN models/final_model.pth')
     
     seismic = glob("../../data/synthetic_data/run/*150-150-2000*/seismicCubes_cumsum_fullstack*.npy")
     age = glob("../../data/synthetic_data/run/*150-150-2000*/faulted_age*.npy")
@@ -140,5 +140,6 @@ if __name__ == "__main__":
     axs[0].imshow(predicted_rgt[50].T)
     im = axs[1].imshow(age_chunk_norm[10][50].T)
     fig.colorbar(im)
+    print(model)
     plt.show()
     
