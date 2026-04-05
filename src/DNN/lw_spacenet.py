@@ -120,14 +120,15 @@ class UNet3D(nn.Module):
         self.outconv = nn.Conv3d(in_channels=features, out_channels=out_channels, kernel_size=1)
         # Smothing layer
         self.smooth_conv = nn.Sequential(
-                nn.Conv3d(
-                    in_channels=out_channels,
-                    out_channels=out_channels,
-                    kernel_size=smoothing_kernel_size,
-                    padding=smoothing_kernel_size // 2,  # Same padding
-                    bias=False,
-                ),
-            )
+            nn.ReplicationPad3d(smoothing_kernel_size // 2),
+            nn.Conv3d(
+                in_channels=out_channels,
+                out_channels=out_channels,
+                kernel_size=smoothing_kernel_size,
+                padding=0,  # Same padding
+                bias=False,
+            ),
+        )
 
     def forward(self, x):
         # Encoder
@@ -260,7 +261,8 @@ class SeismicTrainer:
             global_step = epoch * len(self.train_loader) + batch_idx
             # Log both losses (NEW)
             self.writer.add_scalar('Train/MSE_Loss', mse_loss.item(), global_step)
-            self.writer.add_scalar('Train/TV_Loss', tv_loss.item(), global_step)
+            if self.tv_loss_weight != 0:
+                self.writer.add_scalar('Train/TV_Loss', tv_loss.item(), global_step)
             
             # Print progress every 10 batches
             if batch_idx % 5 == 0:
@@ -294,8 +296,9 @@ class SeismicTrainer:
                 # Log validation loss for each batch
                 global_step = epoch * len(self.val_loader) + batch_idx
                 self.writer.add_scalar('Validation/Total_Loss', total_loss.item(), global_step)
-                self.writer.add_scalar('Validation/MSE_Loss', mse_loss.item(), global_step)
-                self.writer.add_scalar('Validation/TV_Loss', tv_loss.item(), global_step)
+                if self.tv_loss_weight != 0:
+                    self.writer.add_scalar('Validation/MSE_Loss', mse_loss.item(), global_step)
+                    self.writer.add_scalar('Validation/TV_Loss', tv_loss.item(), global_step)
         
         epoch_total_loss = running_total_loss / batch_count
         return epoch_total_loss

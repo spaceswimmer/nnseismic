@@ -2,8 +2,10 @@ data/synthetic_data/
 data/vankor-3d/
 data/grids/*.npz
 data/DNN models/.logs
+data/DNN models/
 litr/*
 *.npy
+*.sgy
 *.las
 *.ipynb_checkpoints
 # Byte-compiled / optimized / DLL files

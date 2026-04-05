@@ -2,7 +2,7 @@
   "project": "tagilsk-trends",
   "project_folder": "../data/synthetic_data/run",
   "work_folder": "../data/synthetic_data/temp",
-  "cube_shape": [150, 150, 2000],
+  "cube_shape": [128, 128, 2000],
   "incident_angles": [7, 15, 24],
   "digi": 2,
   "infill_factor": 5,
