@@ -1,5 +1,7 @@
 from DNN.large_volume_predictor import LargeVolumePredictor
+import util.filehandler as fh
 import numpy as np
+import gc
 import matplotlib.pyplot as plt
 
 def normalize_seismic(seismic):
@@ -17,25 +19,19 @@ predictor = LargeVolumePredictor(
     stride=(64, 64, 64),
     smoothing_kernel_size=3
 )
-
-seismic = np.load('../data/synthetic_data/run/seismic__2026.24405931_tagilsk_150-150-2000/seismicCubes_cumsum_fullstack_2026.24405931.npy')
-seismic = normalize_seismic(seismic)
-rgt_orig = np.load('../data/synthetic_data/run/seismic__2026.24405931_tagilsk_150-150-2000/faulted_age_2026.24405931.npy')
+file = "../data/Vankorskaya_s_p_5_03-04_Migrirovannyiy_PreStack.sgy"
+print('reading segy')
+il_range = (5110, 5510)
+xl_range = (1100, 1500)
+traces, _, _ = fh.read_sgy_selective(file, il_range, xl_range)
+gc.collect()
 # Predict full RGT volume
-# rgt_volume = predictor.predict_full_volume(seismic, merge_method='weighted')
-slices, positions = predictor.merger.slice_volume(rgt_orig)
-slices = normalize_seismic(slices)
-mchunk, mpositions = predictor.merger.vertical_merge(slices, positions)
-hchunk, hpositions = predictor.merger.horizontal_merge(mchunk, mpositions, axis=0)
-fchunk, fpositions = predictor.merger.horizontal_merge(hchunk, hpositions, axis=1)
-print(fpositions)
-print(fchunk[0].shape)
-x, y, z = rgt_orig.shape
-fchunk = fchunk[0][:x, :y, :z]
-fig, axs = plt.subplots(1, 3, figsize=(12, 6))
-axs[0].imshow(seismic[75, :, :].T, cmap='seismic', aspect='auto')
-axs[1].imshow(rgt_orig[75, :, :].T, cmap='prism', aspect='auto')
-axs[2].imshow(fchunk[75, :, :].T, cmap='prism', aspect='auto')
+rgt_volume = predictor.predict_full_volume(traces, merge_method='weighted')
+np.save('../data/predicted_rgt_volume.npy', rgt_volume)
+fig, axs = plt.subplots(1, 2, figsize=(12, 6))
+axs[0].imshow(traces[75, :, :].T, cmap='seismic', aspect='auto')
+# axs[1].imshow(rgt_orig[75, :, :].T, cmap='prism', aspect='auto')
+axs[1].imshow(rgt_volume[75, :, :].T, cmap='prism', aspect='auto')
 plt.show()
 # Save result
-# np.save('predicted_rgt_volume.npy', rgt_volume)
+# 

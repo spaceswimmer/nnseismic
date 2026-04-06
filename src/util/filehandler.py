@@ -36,13 +36,29 @@ def read_las(las_files):
         print(f"Loaded: {key_name} - {len(df)} rows, {len(df.columns)} curves")
     return las_dfs
 
-def read_sgy_selective(filepath, endian='big'):
+import numpy as np
+
+def read_sgy_selective(filepath, il_range=None, xl_range=None, endian='big'):
     with segyio.open(filepath, mode='r', endian=endian, ignore_geometry=True) as src:
-        traces = segyio.tools.collect(src.trace[:])
-        # traces = 123
-        # Select only needed fields (still vectorized)
         il = src.attributes(segyio.TraceField.INLINE_3D)[:]
         xl = src.attributes(segyio.TraceField.CROSSLINE_3D)[:]
+
+        if il_range and xl_range:
+            mask = (il >= il_range[0]) & (il <= il_range[1]) & \
+                   (xl >= xl_range[0]) & (xl <= xl_range[1])
+            indices = np.where(mask)[0]
+            traces = np.array([src.trace[i] for i in indices])
+            il, xl = il[mask], xl[mask]
+        else:
+            traces = segyio.tools.collect(src.trace[:])
+
+        # Reshape to (inlines, crosslines, samples)
+        n_il = len(np.unique(il))
+        n_xl = len(np.unique(xl))
+        traces = traces.reshape(n_il, n_xl, -1)
+        il = np.sort(np.unique(il))
+        xl = np.sort(np.unique(xl))
+
     return traces, il, xl
 
 def find_viable_arrays(folder_path):

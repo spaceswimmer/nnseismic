@@ -1,6 +1,7 @@
 """Volume merger for combining overlapping RGT predictions from large-scale seismic volumes."""
 import numpy as np
 from typing import List, Tuple
+import gc
 from scipy import ndimage
 
 
@@ -53,74 +54,75 @@ class VolumeMerger:
         merged_chunks = []
         merged_positions = []
         
-        sd = self.stride[2]  # depth stride for overlap calculation
-        
         for (h, w), items in groups.items():
-            # Sort by depth position (ascending)
             items.sort(key=lambda x: x[1])
             
-            # Initialize with first chunk as base
+            # Pre-calculate final merged size to avoid repeated concatenation
             first_chunk, first_d = items[0]
-            merged = first_chunk.copy().astype(np.float32)
-            merged_end_d = first_d + merged.shape[2]  # absolute end depth
+            last_chunk, last_d = items[-1]
+            total_depth = last_d + last_chunk.shape[2] - first_d
+            
+            # Pre-allocate merged array once
+            ch, cw = first_chunk.shape[0], first_chunk.shape[1]
+            merged = np.zeros((ch, cw, total_depth), dtype=np.float32)
+            
+            # Fill first chunk
+            merged[:, :, :first_chunk.shape[2]] = first_chunk.astype(np.float32)
+            write_end = first_chunk.shape[2]
             
             for i in range(1, len(items)):
                 curr_chunk, curr_d = items[i]
+                curr_chunk = curr_chunk.astype(np.float32)
                 
-                # Calculate overlap size between merged result and current chunk
-                overlap_size = merged_end_d - curr_d
-                overlap_size = min(overlap_size, curr_chunk.shape[2], merged.shape[2])
+                # Convert absolute position to relative position in merged array
+                rel_start = curr_d - first_d
+                rel_end = rel_start + curr_chunk.shape[2]
+                
+                # Calculate overlap with already written region
+                overlap_size = write_end - rel_start
+                overlap_size = min(overlap_size, curr_chunk.shape[2], total_depth - rel_start)
                 
                 if overlap_size > 0:
-                    # Extract overlap regions from both arrays
-                    merged_overlap = merged[:, :, -overlap_size:]
+                    merged_overlap = merged[:, :, rel_start:rel_start + overlap_size]
                     curr_overlap = curr_chunk[:, :, :overlap_size]
                     
-                    # Compute shift from average residual in overlap region
-                    # This aligns the means to maintain continuity
                     shift = np.mean(merged_overlap - curr_overlap)
-                    
-                    # Apply shift to entire current chunk
                     adjusted_curr = curr_chunk + shift
                     
-                    # Create smooth linear blending weights for overlap region
                     weights = np.linspace(1, 0, overlap_size, dtype=np.float32).reshape(1, 1, -1)
                     
-                    # Blend overlap using weighted average
-                    merged[:, :, -overlap_size:] = (
+                    # Blend in-place using pre-allocated array
+                    merged[:, :, rel_start:rel_start + overlap_size] = (
                         merged_overlap * weights + 
                         adjusted_curr[:, :, :overlap_size] * (1 - weights)
                     )
                     
-                    # Append non-overlapping portion from current chunk
-                    new_portion = adjusted_curr[:, :, overlap_size:]
-                    if new_portion.shape[2] > 0:
-                        merged = np.concatenate([merged, new_portion], axis=2)
-                        merged_end_d = curr_d + curr_chunk.shape[2]
+                    # Write non-overlapping portion
+                    if rel_end > write_end:
+                        merged[:, :, write_end:rel_end] = adjusted_curr[:, :, overlap_size:]
                 else:
-                    # No overlap - concatenate directly (edge case)
-                    merged = np.concatenate([merged, curr_chunk], axis=2)
-                    merged_end_d = curr_d + curr_chunk.shape[2]
+                    merged[:, :, rel_start:rel_end] = curr_chunk
+                
+                write_end = max(write_end, rel_end)
             
             merged_chunks.append(merged)
             merged_positions.append((h, w, first_d))
         
         return merged_chunks, merged_positions
-    
+
     def horizontal_merge(self, chunks, positions, axis=0):
         groups = {}
         
         for chunk, pos in zip(chunks, positions):
             h, w, d = pos
-            # Key: position along the two axes NOT being merged
             if axis == 0:
-                key = (w, d)  # group by crossline and depth
+                key = (w, d)
                 merge_pos = h
             elif axis == 1:
-                key = (h, d)  # group by inline and depth
+                key = (h, d)
                 merge_pos = w
             else:
-                key = (h, w)  # group by inline and crossline
+                key = (h, w)
                 merge_pos = d
             
             if key not in groups:
@@ -130,77 +132,77 @@ class VolumeMerger:
         merged_chunks = []
         merged_positions = []
         
-        stride = self.stride[axis]
-        
         for key, items in groups.items():
             items.sort(key=lambda x: x[1])
             
+            # Pre-calculate final merged size to avoid repeated concatenation
             first_chunk, first_pos = items[0]
-            merged = first_chunk.copy().astype(np.float32)
-            merged_end = first_pos + merged.shape[axis]
+            last_chunk, last_pos = items[-1]
+            total_size = last_pos + last_chunk.shape[axis] - first_pos
+            
+            # Pre-allocate merged array once
+            shape = list(first_chunk.shape)
+            shape[axis] = total_size
+            merged = np.zeros(shape, dtype=np.float32)
+            
+            # Fill first chunk using dynamic slicing
+            slice_obj = [slice(None)] * 3
+            slice_obj[axis] = slice(0, first_chunk.shape[axis])
+            merged[tuple(slice_obj)] = first_chunk.astype(np.float32)
+            write_end = first_chunk.shape[axis]
             
             for i in range(1, len(items)):
                 curr_chunk, curr_pos = items[i]
+                curr_chunk = curr_chunk.astype(np.float32)
                 
-                overlap_size = merged_end - curr_pos
-                overlap_size = min(overlap_size, curr_chunk.shape[axis], merged.shape[axis])
+                rel_start = curr_pos - first_pos
+                rel_end = rel_start + curr_chunk.shape[axis]
+                
+                overlap_size = write_end - rel_start
+                overlap_size = min(overlap_size, curr_chunk.shape[axis], total_size - rel_start)
                 
                 if overlap_size > 0:
-                    # Extract overlap regions
-                    if axis == 0:
-                        merged_overlap = merged[-overlap_size:, :, :]
-                        curr_overlap = curr_chunk[:overlap_size, :, :]
-                    elif axis == 1:
-                        merged_overlap = merged[:, -overlap_size:, :]
-                        curr_overlap = curr_chunk[:, :overlap_size, :]
-                    else:
-                        merged_overlap = merged[:, :, -overlap_size:]
-                        curr_overlap = curr_chunk[:, :, :overlap_size]
+                    # Extract overlap regions using dynamic slicing
+                    merged_slice = [slice(None)] * 3
+                    merged_slice[axis] = slice(rel_start, rel_start + overlap_size)
+                    merged_overlap = merged[tuple(merged_slice)]
                     
-                    # Fit linear model: merged_overlap = scale * curr_overlap + bias
+                    curr_slice = [slice(None)] * 3
+                    curr_slice[axis] = slice(0, overlap_size)
+                    curr_overlap = curr_chunk[tuple(curr_slice)]
+                    
                     scale, bias = self._fit_linear_tikhonov(
                         curr_overlap.flatten(), 
                         merged_overlap.flatten()
                     )
                     
-                    # Transform current chunk using fitted mapping
-                    transformed_curr = scale * curr_chunk.astype(np.float32) + bias
+                    transformed_curr = scale * curr_chunk + bias
                     
-                    # Create blending weights along merge axis
+                    # Create axis-appropriate weight shape
                     weights = np.linspace(1, 0, overlap_size, dtype=np.float32)
-                    if axis == 0:
-                        weights = weights.reshape(-1, 1, 1)
-                    elif axis == 1:
-                        weights = weights.reshape(1, -1, 1)
-                    else:
-                        weights = weights.reshape(1, 1, -1)
+                    weight_shape = [1, 1, 1]
+                    weight_shape[axis] = overlap_size
+                    weights = weights.reshape(weight_shape)
                     
-                    # Blend overlap regions
-                    if axis == 0:
-                        merged[-overlap_size:, :, :] = (
-                            merged_overlap * weights + 
-                            transformed_curr[:overlap_size, :, :] * (1 - weights)
-                        )
-                        new_portion = transformed_curr[overlap_size:, :, :]
-                    elif axis == 1:
-                        merged[:, -overlap_size:, :] = (
-                            merged_overlap * weights + 
-                            transformed_curr[:, :overlap_size, :] * (1 - weights)
-                        )
-                        new_portion = transformed_curr[:, overlap_size:, :]
-                    else:
-                        merged[:, :, -overlap_size:] = (
-                            merged_overlap * weights + 
-                            transformed_curr[:, :, :overlap_size] * (1 - weights)
-                        )
-                        new_portion = transformed_curr[:, :, overlap_size:]
+                    # Blend in-place
+                    merged[tuple(merged_slice)] = (
+                        merged_overlap * weights +
+                        transformed_curr[tuple(curr_slice)] * (1 - weights)
+                    )
                     
-                    if new_portion.shape[axis] > 0:
-                        merged = np.concatenate([merged, new_portion], axis=axis)
-                        merged_end = curr_pos + curr_chunk.shape[axis]
+                    # Write non-overlapping portion
+                    if rel_end > write_end:
+                        new_slice = [slice(None)] * 3
+                        new_slice[axis] = slice(overlap_size, None)
+                        write_slice = [slice(None)] * 3
+                        write_slice[axis] = slice(write_end, rel_end)
+                        merged[tuple(write_slice)] = transformed_curr[tuple(new_slice)]
                 else:
-                    merged = np.concatenate([merged, curr_chunk], axis=axis)
-                    merged_end = curr_pos + curr_chunk.shape[axis]
+                    write_slice = [slice(None)] * 3
+                    write_slice[axis] = slice(rel_start, rel_end)
+                    merged[tuple(write_slice)] = curr_chunk
+                
+                write_end = max(write_end, rel_end)
             
             # Reconstruct position from key
             if axis == 0:
@@ -250,8 +252,14 @@ class VolumeMerger:
     def merge_all_predictions(self, predictions: List[np.ndarray],
                              positions: List[Tuple[int, int, int]]) -> np.ndarray:
         zchunk, zpositions = self.vertical_merge(predictions, positions)
+        
         xchunk, xpositions = self.horizontal_merge(zchunk, zpositions, axis=0)
+        del zchunk, zpositions  # Free vertical merge memory
+        
         ychunk, ypositions = self.horizontal_merge(xchunk, xpositions, axis=1)
+        del xchunk, xpositions  # Free horizontal merge (axis 0) memory
+        gc.collect()            # Force immediate cleanup
+        
         x, y, z = self.original_shape
-        result = ychunk[:x, :y, :z]
+        result = ychunk[0][:x, :y, :z]
         return result

@@ -238,9 +238,9 @@ def plot_3d_array_with_slider(array, axis='z', initial_gain=1.0, norm_mode='glob
     # Helper function to get slice data
     def get_slice_data(idx):
         if axis == 'x':
-            return array[idx, :, :]
+            return array[idx, :, :].T
         elif axis == 'y':
-            return array[:, idx, :]
+            return array[:, idx, :].T
         else:  # axis == 'z'
             return array[:, :, idx]
     
