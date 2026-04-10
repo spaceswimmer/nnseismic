@@ -15,6 +15,7 @@ class ssim3DLoss(nn.Module):
     def getLossName(self):
         return self.name
 
+class mse3DLoss(nn.Module):
     """Calculate loss function of RGT"""
     def __init__(self):
         super(mse3DLoss, self).__init__()

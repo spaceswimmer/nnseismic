@@ -1,10 +1,10 @@
 {
   "project": "tagilsk-trends",
-  "project_folder": "../data/synthetic_data/run",
-  "work_folder": "../data/synthetic_data/temp",
-  "cube_shape": [256, 256, 1000],
+  "project_folder": "/mnt/storage/nnseismic/synthetic_data/raw",
+  "work_folder": "/mnt/storage/nnseismic/synthetic_data/raw/temp",
+  "cube_shape": [192, 192, 1000],
   "incident_angles": [7, 15, 20],
-  "digi": 3,
+  "digi": 2,
   "infill_factor": 5,
   "initial_layer_stdev": [7.0, 25.0],
   "thickness_min": 2,
@@ -38,6 +38,6 @@
   "include_salt": false,
   "write_to_hdf": false,
   "broadband_qc_volume": false,
-  "model_qc_volumes": false,
+  "model_qc_volumes": true,
   "multiprocess_bp": true
 }

@@ -60,36 +60,46 @@ def train_model(model, optimizer, dataloader, scheduler, num_epochs, opt, datalo
     return model
 
 def train(model, dataloader, optimizer, criterion, scheduler, epoch, opt):
-
     model.train()
     running_loss = 0.0
     average_meter = AverageMeter()
 
     for i, param_group in enumerate(optimizer.param_groups):
         current_lr = float(param_group['lr'])
-
+    start = time.time()
     for batch_index, (seis, rgt) in enumerate(dataloader):
-
+        if batch_index % 10 == 0:
+            tqdm.write(f'batch {batch_index}')
         if opt.data_augmentation:
-            seis = torch.cat((seis, HorizontalFlip1(seis)), dim=0)
-            rgt = torch.cat((rgt, HorizontalFlip1(rgt)), dim=0)
+            seis = torch.cat([
+                seis,
+                HorizontalFlip1(seis),
+                HorizontalFlip2(seis)
+            ], dim=0)
+            
+            rgt = torch.cat([
+                rgt,
+                HorizontalFlip1(rgt),
+                HorizontalFlip2(rgt)
+            ], dim=0)
 
         seis, rgt = seis.to(device), rgt.to(device)
 
-        with torch.autograd.detect_anomaly():
-            rgt_pred = model(seis)
-            loss = criterion(rgt_pred, rgt)
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+        
+        rgt_pred = model(seis)
+        loss = criterion(rgt_pred, rgt)
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
 
-        running_loss += float(loss)
+        running_loss += loss.item()
         result= Result()
         result.evaluate(rgt.data, rgt_pred.data)
         average_meter.update(result, seis.size(0))
-
+    eptime = time.time() - start
     epoch_loss = running_loss / len(dataloader)
     tqdm.write('=> Train Epoch:{0}'
+               f'Time - {eptime}'
           ' Loss={Loss:.5f}'
           '\nLearning rate: {1}'
           '\n-------------------------------------------------------------------------------------------'.format(
@@ -114,7 +124,7 @@ def valid(model, dataloader, criterion, epoch, opt):
             rgt_pred = model(seis)
             loss = criterion(rgt_pred, rgt)
        
-        running_loss += loss.data
+        running_loss += loss.item()
         result= Result()
         result.evaluate(rgt.data, rgt_pred.data)
         average_meter.update(result, seis.size(0))
