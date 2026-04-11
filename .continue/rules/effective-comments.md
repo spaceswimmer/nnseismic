@@ -1,6 +1,6 @@
 ---
 name: Effective Code Comments
-globs: "**/*.{js,ts,py,go,java,rb,cs}"
+globs: "**/*.{js,ts,py,go,java,rb,cs,ipynb}"
 alwaysApply: false
 description: Guidelines for writing meaningful and maintainable code comments
 ---

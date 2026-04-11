@@ -73,14 +73,12 @@ def train(model, dataloader, optimizer, criterion, scheduler, epoch, opt):
         if opt.data_augmentation:
             seis = torch.cat([
                 seis,
-                HorizontalFlip1(seis),
-                HorizontalFlip2(seis)
+                HorizontalFlip1(seis)
             ], dim=0)
             
             rgt = torch.cat([
                 rgt,
-                HorizontalFlip1(rgt),
-                HorizontalFlip2(rgt)
+                HorizontalFlip1(rgt)
             ], dim=0)
 
         seis, rgt = seis.to(device), rgt.to(device)

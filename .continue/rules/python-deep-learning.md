@@ -1,7 +1,7 @@
 ---
 name: Python Deep Learning
 description: Guidelines for writing Python projects with transformers, diffusers, and gradio
-globs: "**/*.py"
+globs: "**/*.{py,ipynb}"
 alwaysApply: false
 ---
 
