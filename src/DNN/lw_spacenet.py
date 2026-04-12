@@ -124,28 +124,51 @@ class UNet3D(nn.Module):
         out_smth = self.smooth_conv(out)
         return out_smth
 
-    @staticmethod
-    def _block(in_channels, features, name):
-        return nn.Sequential(
-            nn.Conv3d(
+    class ResBlock(nn.Module):
+        def __init__(self, in_channels, features):
+            super(UNet3D.ResBlock, self).__init__()
+            self.conv1 = nn.Conv3d(
                 in_channels=in_channels,
                 out_channels=features,
                 kernel_size=3,
                 padding=1,
                 bias=False,
-            ),
-            nn.GroupNorm(num_groups=8, num_channels=features),
-            nn.ReLU(inplace=True),
-            nn.Conv3d(
+            )
+            self.norm1 = nn.GroupNorm(num_groups=8, num_channels=features)
+            self.relu = nn.ReLU(inplace=True)
+            self.conv2 = nn.Conv3d(
                 in_channels=features,
                 out_channels=features,
                 kernel_size=3,
                 padding=1,
                 bias=False,
-            ),
-            nn.GroupNorm(num_groups=8, num_channels=features),
-            nn.ReLU(inplace=True),
-        )
+            )
+            self.norm2 = nn.GroupNorm(num_groups=8, num_channels=features)
+
+            if in_channels != features:
+                self.downsample = nn.Sequential(
+                    nn.Conv3d(in_channels, features, kernel_size=1, bias=False),
+                    nn.GroupNorm(num_groups=8, num_channels=features),
+                )
+            else:
+                self.downsample = None
+
+        def forward(self, x):
+            residual = x
+            out = self.conv1(x)
+            out = self.norm1(out)
+            out = self.relu(out)
+            out = self.conv2(out)
+            out = self.norm2(out)
+            if self.downsample is not None:
+                residual = self.downsample(x)
+            out += residual
+            out = self.relu(out)
+            return out
+
+    @staticmethod
+    def _block(in_channels, features, name):
+        return UNet3D.ResBlock(in_channels, features)
 
 
 class SeismicTrainer:
@@ -174,7 +197,7 @@ class SeismicTrainer:
         )
 
         self.scheduler = lr_scheduler.ReduceLROnPlateau(
-            self.optimizer, mode="min", patience=5, factor=0.5
+            self.optimizer, mode="min", patience=2, factor=0.5
         )
 
         self.train_losses = []
@@ -187,12 +210,8 @@ class SeismicTrainer:
 
         for batch_idx, (seismic, rgt) in enumerate(self.train_loader):
             if self.data_augmentation:
-                seismic = torch.cat(
-                    [seismic, HorizontalFlip1(seismic)], dim=0
-                )
-                rgt = torch.cat(
-                    [rgt, HorizontalFlip1(rgt)], dim=0
-                )
+                seismic = torch.cat([seismic, HorizontalFlip1(seismic)], dim=0)
+                rgt = torch.cat([rgt, HorizontalFlip1(rgt)], dim=0)
 
             seismic, rgt = seismic.to(self.device), rgt.to(self.device)
 
@@ -239,14 +258,20 @@ class SeismicTrainer:
         epoch_loss = running_loss / batch_count
         return epoch_loss
 
-    def train(self, num_epochs, save_dir="./checkpoints", checkpoint_interval=10):
+    def train(
+        self,
+        num_epochs,
+        save_dir="./checkpoints",
+        checkpoint_interval=10,
+        start_epoch=0,
+        best_val_loss=float("inf"),
+    ):
         os.makedirs(save_dir, exist_ok=True)
 
-        best_val_loss = float("inf")
         patience_counter = 0
         patience = 10
 
-        for epoch in range(num_epochs):
+        for epoch in range(start_epoch, num_epochs):
             tqdm.write(f"\nEpoch {epoch + 1}/{num_epochs}")
             tqdm.write("-" * 30)
 
@@ -319,6 +344,24 @@ class SeismicTrainer:
             self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
         tqdm.write(f"Loaded model from {checkpoint_path}")
 
+    def resume(self, checkpoint_path, num_epochs):
+        checkpoint = torch.load(checkpoint_path, map_location=self.device)
+
+        self.model.load_state_dict(checkpoint["model_state_dict"])
+        self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+
+        start_epoch = checkpoint.get("epoch", 0) + 1
+        best_val_loss = checkpoint.get("val_loss", float("inf"))
+
+        if best_val_loss is None:
+            best_val_loss = float("inf")
+
+        tqdm.write(
+            f"Resuming from epoch {start_epoch}, previous val_loss: {best_val_loss:.6f}"
+        )
+
+        return start_epoch, best_val_loss
+
 
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -340,6 +383,8 @@ def train_model(
     checkpoint_interval=10,
     pretrained_model=None,
     data_augmentation=True,
+    resume=None,
+    name="experiment",
 ):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     tqdm.write(f"Using device: {device}")
@@ -380,21 +425,32 @@ def train_model(
 
     tqdm.write(f"Model parameters: {count_parameters(model):,}")
 
+    full_save_dir = os.path.join(save_dir, name)
+    full_log_dir = os.path.join(log_dir, name)
+
     trainer = SeismicTrainer(
         model=model,
         train_loader=train_loader,
         val_loader=val_loader,
         device=device,
-        log_dir=log_dir,
+        log_dir=full_log_dir,
         lr=lr,
         weight_decay=weight_decay,
         data_augmentation=data_augmentation,
     )
 
+    start_epoch = 0
+    best_val_loss = float("inf")
+
+    if resume is not None:
+        start_epoch, best_val_loss = trainer.resume(resume, num_epochs)
+
     train_losses, val_losses = trainer.train(
         num_epochs=num_epochs,
-        save_dir=save_dir,
+        save_dir=full_save_dir,
         checkpoint_interval=checkpoint_interval,
+        start_epoch=start_epoch,
+        best_val_loss=best_val_loss,
     )
 
     return train_losses, val_losses, model
@@ -464,13 +520,28 @@ if __name__ == "__main__":
         help="interval between saving checkpoints",
     )
     parser.add_argument(
-        "--pretrained_model", type=str, default=None, help="path to pretrained model"
+        "--pretrained_model",
+        type=str,
+        default=None,
+        help="path to pretrained model weights",
+    )
+    parser.add_argument(
+        "--resume",
+        type=str,
+        default=None,
+        help="path to checkpoint to resume training from (resumes epoch, optimizer, scheduler)",
     )
     parser.add_argument(
         "--data_augmentation",
         type=lambda x: x.lower() in ("yes", "true", "t", "y", "1"),
         default=True,
         help="use data augmentation (default: True)",
+    )
+    parser.add_argument(
+        "--name",
+        type=str,
+        default="experiment",
+        help="experiment name for logs and checkpoints",
     )
 
     opt = parser.parse_args()
@@ -491,4 +562,6 @@ if __name__ == "__main__":
         checkpoint_interval=opt.checkpoint_interval,
         pretrained_model=opt.pretrained_model,
         data_augmentation=opt.data_augmentation,
+        resume=opt.resume,
+        name=opt.name,
     )

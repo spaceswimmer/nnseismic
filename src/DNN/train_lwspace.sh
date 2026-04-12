@@ -1,15 +1,16 @@
 CUDA_VISIBLE_DEVICES=0 python lw_spacenet.py \
+--name snet-4 \
 --dataroot /mnt/storage/nnseismic/synthetic_data/train \
 --dataroot_val /mnt/storage/nnseismic/synthetic_data/val \
 --shape 128 128 128 1 \
 --batch_size 3 \
 --nepochs 81 \
---lr 0.001 \
+--lr 0.0001 \
 --weight_decay 0.0001 \
 --dataset_size 300 \
 --dataset_size_val 30 \
 --num_workers 4 \
---save_dir /mnt/storage/nnseismic/runs/snet-2/checkpoints \
+--save_dir /mnt/storage/nnseismic/runs/ \
 --log_dir /mnt/storage/nnseismic/runs/.logs \
---checkpoint_interval 5 \
---data_augmentation true \
+--checkpoint_interval 10 \
+--data_augmentation false \
