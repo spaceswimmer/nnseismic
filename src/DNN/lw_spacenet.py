@@ -182,12 +182,14 @@ class SeismicTrainer:
         lr=1e-4,
         weight_decay=1e-4,
         data_augmentation=True,
+        grad_clip=1.0,
     ):
         self.model = model.to(device).float()
         self.train_loader = train_loader
         self.val_loader = val_loader
         self.device = device
         self.data_augmentation = data_augmentation
+        self.grad_clip = grad_clip
 
         self.writer = SummaryWriter(log_dir=log_dir)
 
@@ -197,7 +199,7 @@ class SeismicTrainer:
         )
 
         self.scheduler = lr_scheduler.ReduceLROnPlateau(
-            self.optimizer, mode="min", patience=2, factor=0.5
+            self.optimizer, mode="min", patience=5, factor=0.5
         )
 
         self.train_losses = []
@@ -221,6 +223,8 @@ class SeismicTrainer:
             loss = self.criterion(outputs, rgt)
 
             loss.backward()
+            if self.grad_clip > 0:
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip)
             self.optimizer.step()
 
             running_loss += loss.item()
@@ -382,9 +386,10 @@ def train_model(
     log_dir="./logs",
     checkpoint_interval=10,
     pretrained_model=None,
-    data_augmentation=True,
+    data_augmentation=False,
     resume=None,
     name="experiment",
+    grad_clip=1.0,
 ):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     tqdm.write(f"Using device: {device}")
@@ -437,6 +442,7 @@ def train_model(
         lr=lr,
         weight_decay=weight_decay,
         data_augmentation=data_augmentation,
+        grad_clip=grad_clip,
     )
 
     start_epoch = 0
@@ -543,6 +549,12 @@ if __name__ == "__main__":
         default="experiment",
         help="experiment name for logs and checkpoints",
     )
+    parser.add_argument(
+        "--grad_clip",
+        type=float,
+        default=1.0,
+        help="gradient clipping max norm (0 to disable, default: 1.0)",
+    )
 
     opt = parser.parse_args()
 
@@ -564,4 +576,5 @@ if __name__ == "__main__":
         data_augmentation=opt.data_augmentation,
         resume=opt.resume,
         name=opt.name,
+        grad_clip=opt.grad_clip,
     )
