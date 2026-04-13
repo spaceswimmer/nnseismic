@@ -1,10 +1,10 @@
 CUDA_VISIBLE_DEVICES=0 python lw_spacenet.py \
---name snet-5 \
+--name snet-6-nosmooth \
 --dataroot /mnt/storage/nnseismic/synthetic_data/train \
 --dataroot_val /mnt/storage/nnseismic/synthetic_data/val \
 --shape 128 128 128 1 \
---batch_size 3 \
---nepochs 81 \
+--batch_size 2 \
+--nepochs 91 \
 --lr 0.00001 \
 --weight_decay 0.001 \
 --dataset_size 300 \
@@ -13,5 +13,5 @@ CUDA_VISIBLE_DEVICES=0 python lw_spacenet.py \
 --save_dir /mnt/storage/nnseismic/runs/ \
 --log_dir /mnt/storage/nnseismic/runs/.logs \
 --checkpoint_interval 10 \
---data_augmentation false \
+--data_augmentation true \
 --grad_clip 1.0 \

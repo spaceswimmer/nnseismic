@@ -212,8 +212,16 @@ class SeismicTrainer:
 
         for batch_idx, (seismic, rgt) in enumerate(self.train_loader):
             if self.data_augmentation:
-                seismic = torch.cat([seismic, HorizontalFlip1(seismic)], dim=0)
-                rgt = torch.cat([rgt, HorizontalFlip1(rgt)], dim=0)
+                seismic = torch.cat([seismic, HorizontalFlip1(seismic), VerticalFlip(seismic)], dim=0)
+                rgt = torch.cat([rgt, HorizontalFlip1(rgt), VerticalFlip_reverse(rgt)], dim=0)
+
+            # DELETE THIS LATER ITS FOR DEBUGGING
+            # fig, axs = plt.subplots(seismic.shape[0], 1, figsize=(10, 10))
+            # for i, ax in enumerate(axs):
+            #     sl = [i, slice(None), slice(None), 70]
+            #     ax.imshow(np.reshape(seismic[sl], (128, 128)), cmap='gray')
+            #     ax.contour(np.reshape(rgt[sl], (128, 128)), np.linspace(-2,2,10),colors='black',linewidths=2)
+            #     fig.savefig("/mnt/storage/nnseismic/runs/snet-5/debug.png")
 
             seismic, rgt = seismic.to(self.device), rgt.to(self.device)
 

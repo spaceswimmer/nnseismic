@@ -1,19 +1,19 @@
 CUDA_VISIBLE_DEVICES=0 python train.py \
---session_name exp3 \
+--session_name full_rgt_1 \
 --sessions_path /mnt/storage/nnseismic/runs \
 --dataroot /mnt/storage/nnseismic/synthetic_data/train \
 --lr 0.001 \
 --shape 128 128 128 \
 --batch_size 2 \
 --dataset_size 300 \
---nepochs 80 \
+--nepochs 91 \
 --num_workers 4 \
 --lr_patience 4 \
 --lr_factor 0.5 \
 --loss_type SSIM \
 --data_augmentation n \
 --history_interval 1 \
---checkpoint_interval 5 \
+--checkpoint_interval 10 \
 --valid y \
 --dataroot_val /mnt/storage/nnseismic/synthetic_data/val \
 --dataset_size_val 30 \

@@ -1,4 +1,4 @@
-from DNN.large_volume_predictor import LargeVolumePredictor
+from DNN.depr.large_volume_predictor import LargeVolumePredictor
 import util.filehandler as fh
 import numpy as np
 import gc
