@@ -9,8 +9,8 @@ import os
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
-from dataset import SeismicDataset, create_dataloader, sort_list_IDs
-from loss import SSIM3DLoss
+from DNN.dataset import SeismicDataset, create_dataloader, sort_list_IDs
+from DNN.loss import SSIM3DLoss
 
 
 def HorizontalFlip1(dat):
