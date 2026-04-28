@@ -31,6 +31,7 @@ class TrainOptions3d(BaseOptions3d):
         parser.add_argument("--history_interval", type=int, default=50, help="interval between output loss history")
         parser.add_argument('--dataroot_val',type=str, default=None, help='''path to data for validation''')
         parser.add_argument('--loss_type',type=str, default='MSE', help='''loss function''')
+        parser.add_argument('--ssim_max_val', type=float, default=1.0, help='max value for SSIM loss (data range)')
         parser.add_argument('--dataset_size_val', type=int, default=float("inf"), help='''The size of the dataset for validation''')    
         self.isTrain = True
         return parser

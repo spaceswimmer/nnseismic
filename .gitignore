@@ -4,6 +4,7 @@ data/grids/*.npz
 data/DNN models/.logs
 data/DNN models/
 litr/*
+*.venv
 *.npy
 *.sgy
 *.las

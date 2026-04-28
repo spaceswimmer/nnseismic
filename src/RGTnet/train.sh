@@ -1,6 +1,6 @@
 CUDA_VISIBLE_DEVICES=0,1,2,3 python train.py \
 --dataroot datasets/syn_training \
---lr 0.001 \
+--lr 0.0001 \
 --shape 256 256 128 \
 --batch_size 4 \
 --dataset_size 200 \

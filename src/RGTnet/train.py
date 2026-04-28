@@ -48,7 +48,7 @@ def train_model(
     if opt.loss_type == "MSE":
         criterion = mse3DLoss()
     elif opt.loss_type == "SSIM":
-        criterion = ssim3DLoss()
+        criterion = ssim3DLoss(max_val=opt.ssim_max_val)
 
     train_loss_history, test_loss_history = [], []
     best_val_loss = float("inf")
