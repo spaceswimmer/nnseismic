@@ -183,6 +183,7 @@ class SeismicTrainer:
         weight_decay=1e-4,
         data_augmentation=True,
         grad_clip=1.0,
+        ssim_max_val=1.0,
     ):
         self.model = model.to(device).float()
         self.train_loader = train_loader
@@ -193,7 +194,7 @@ class SeismicTrainer:
 
         self.writer = SummaryWriter(log_dir=log_dir)
 
-        self.criterion = SSIM3DLoss()
+        self.criterion = SSIM3DLoss(max_val=ssim_max_val)
         self.optimizer = optim.Adam(
             model.parameters(), lr=lr, weight_decay=weight_decay
         )
@@ -398,6 +399,7 @@ def train_model(
     resume=None,
     name="experiment",
     grad_clip=1.0,
+    ssim_max_val=1.0,
 ):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     tqdm.write(f"Using device: {device}")
@@ -451,6 +453,7 @@ def train_model(
         weight_decay=weight_decay,
         data_augmentation=data_augmentation,
         grad_clip=grad_clip,
+        ssim_max_val=ssim_max_val,
     )
 
     start_epoch = 0
@@ -563,6 +566,12 @@ if __name__ == "__main__":
         default=1.0,
         help="gradient clipping max norm (0 to disable, default: 1.0)",
     )
+    parser.add_argument(
+        "--ssim_max_val",
+        type=float,
+        default=1.0,
+        help="max value for SSIM loss normalization (default: 1.0)",
+    )
 
     opt = parser.parse_args()
 
@@ -585,4 +594,5 @@ if __name__ == "__main__":
         resume=opt.resume,
         name=opt.name,
         grad_clip=opt.grad_clip,
+        ssim_max_val=opt.ssim_max_val,
     )

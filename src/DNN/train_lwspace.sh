@@ -15,3 +15,4 @@ CUDA_VISIBLE_DEVICES=0 python lw_spacenet.py \
 --checkpoint_interval 10 \
 --data_augmentation true \
 --grad_clip 1.0 \
+--ssim_max_val 7.7236 \

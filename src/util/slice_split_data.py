@@ -4,7 +4,6 @@ import shutil
 from glob import glob
 
 import numpy as np
-from sklearn.model_selection import train_test_split
 
 # Configuration Constants
 CHUNK_SIZE = (128, 128, 128)
@@ -105,7 +104,9 @@ def main():
         raise ValueError(f"No files found. Check path: {args.raw_data_path}")
 
     # Process all pairs with continuous global indexing
+    # Track chunk ranges per file to avoid train/val leakage from overlapping strides
     global_idx = 0
+    file_chunk_ranges = []
     for idx, (s_p, a_p) in enumerate(zip(seis_paths, age_paths)):
         print(f"Processing pair {idx+1}/{len(seis_paths)}...")
         
@@ -116,11 +117,13 @@ def main():
         slices = get_chunk_slices(seis.shape, CHUNK_SIZE, STRIDE)
         
         # Save both with same slices and continuous global index
+        start_idx = global_idx
         next_idx = save_chunks(seis, slices, dirs["chunks_seis"], global_idx, normalize_seismic)
         next_idx = save_chunks(age, slices, dirs["chunks_rgt"], global_idx, normalize_rgt)
         
         del seis, age
         chunks_this_file = next_idx - global_idx
+        file_chunk_ranges.append((start_idx, next_idx))
         global_idx = next_idx
         print(f"  Created {chunks_this_file} chunks (total: {global_idx})")
 
@@ -137,8 +140,15 @@ def main():
     if len(files) == 0:
         raise ValueError("No chunks created. Check data shapes and patterns.")
 
-    # Train/Val Split
-    train_idx, val_idx = train_test_split(range(len(files)), test_size=0.1, random_state=42)
+    # Train/Val Split: first file's chunks to val, rest to train (avoids stride leakage)
+    if len(file_chunk_ranges) == 0:
+        raise ValueError("No file chunk ranges recorded.")
+    
+    val_start, val_end = file_chunk_ranges[0]
+    val_indices = list(range(val_start, val_end))
+    train_indices = []
+    for start, end in file_chunk_ranges[1:]:
+        train_indices.extend(range(start, end))
 
     def move_files(indices, src_s, src_r, dst_s, dst_r):
         for i in indices:
@@ -146,14 +156,14 @@ def main():
             shutil.move(os.path.join(src_s, fname), dst_s)
             shutil.move(os.path.join(src_r, fname), dst_r)
 
-    print(f"Splitting: {len(train_idx)} train, {len(val_idx)} val chunks.")
+    print(f"Splitting: {len(train_indices)} train, {len(val_indices)} val chunks (first file -> val).")
     
     print("Moving training data...")
-    move_files(train_idx, dirs["chunks_seis"], dirs["chunks_rgt"], 
+    move_files(train_indices, dirs["chunks_seis"], dirs["chunks_rgt"], 
                dirs["train_seis"], dirs["train_rgt"])
     
     print("Moving validation data...")
-    move_files(val_idx, dirs["chunks_seis"], dirs["chunks_rgt"], 
+    move_files(val_indices, dirs["chunks_seis"], dirs["chunks_rgt"], 
                dirs["val_seis"], dirs["val_rgt"])
 
     # Cleanup
