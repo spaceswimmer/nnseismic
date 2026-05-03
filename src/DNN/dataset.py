@@ -62,14 +62,14 @@ class SeismicDataset(data.Dataset):
         X = np.fromfile(seis_path, dtype=np.float32)
         X = self.transform(X)
         X = mea_std_norm(X)
-        X = torch.from_numpy(X).float()
+        X = torch.from_numpy(X).bfloat16()
 
         if not self.only_load_input:
             rgt_path = os.path.join(self.rgt_dir, ID)
             Y = np.fromfile(rgt_path, dtype=np.float32)
             Y = self.transform(Y)
             Y = mea_std_norm(Y)
-            Y = torch.from_numpy(Y).float()
+            Y = torch.from_numpy(Y).bfloat16()
             return X, Y
         else:
             return X

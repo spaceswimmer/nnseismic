@@ -3,8 +3,8 @@ import torch.nn.functional as F
 import numpy as np
 
 
-def _fspecial_gaussian3d(size, channel, sigma):
-    coords = torch.tensor([(x - (size - 1.0) / 2.0) for x in range(size)])
+def _fspecial_gaussian3d(size, channel, sigma, dtype=None):
+    coords = torch.tensor([(x - (size - 1.0) / 2.0) for x in range(size)], dtype=dtype)
     coords = -(coords**2) / (2.0 * sigma**2)
     grid = coords.view(1, -1, 1) + coords.view(-1, 1, 1) + coords.view(1, 1, -1)
     grid = grid.view(1, -1)
@@ -76,12 +76,12 @@ def ms_ssim_loss3d(
     _, channel, _, _, _ = input.size()
 
     if kernel is None:
-        kernel = _fspecial_gaussian3d(filter_size, channel, sigma)
-    kernel = kernel.to(device=input.device)
+        kernel = _fspecial_gaussian3d(filter_size, channel, sigma, dtype=input.dtype)
+    kernel = kernel.to(device=input.device, dtype=input.dtype)
 
     if weights is None:
         weights = [0.0448, 0.2856, 0.3001, 0.2363, 0.1333]
-    weights = torch.tensor(weights, device=input.device)
+    weights = torch.tensor(weights, device=input.device, dtype=input.dtype)
     weights = weights.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
     levels = weights.size(0)
     mssim = []
@@ -121,7 +121,7 @@ class MultiScaleSSIMLoss3d(torch.nn.Module):
         self.k1 = k1
         self.k2 = k2
         self.sigma = sigma
-        self.kernel = _fspecial_gaussian3d(filter_size, channel, sigma)
+        self.kernel = None
         self.reduction = reduction
 
     def forward(

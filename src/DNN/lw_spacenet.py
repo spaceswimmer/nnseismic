@@ -6,11 +6,15 @@ import torch.optim as optim
 from torch.optim import lr_scheduler
 import numpy as np
 import os
+import json
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
+import matplotlib.pyplot as plt
+import random
 
 from DNN.dataset import SeismicDataset, create_dataloader, sort_list_IDs
 from DNN.loss import SSIM3DLoss
+from util.metrics import mae, rmse, mrpd
 
 
 def HorizontalFlip1(dat):
@@ -95,6 +99,17 @@ class UNet3D(nn.Module):
                 bias=False,
             ),
         )
+
+        self.apply(self._init_weights)
+
+    def _init_weights(self, m):
+        if isinstance(m, (nn.Conv3d, nn.ConvTranspose3d)):
+            nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="leaky_relu", a=0.1)
+            if m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, (nn.GroupNorm, nn.BatchNorm3d)):
+            nn.init.constant_(m.weight, 1)
+            nn.init.constant_(m.bias, 0)
 
     def forward(self, x):
         enc1 = self.encoder1(x)
@@ -184,13 +199,21 @@ class SeismicTrainer:
         data_augmentation=True,
         grad_clip=1.0,
         ssim_max_val=1.0,
+        checkpoint_interval=10,
+        pictures_dir=None,
+        patience=10,
+        accumulation_steps=1,
     ):
-        self.model = model.to(device).float()
+        self.model = model.to(device).bfloat16()
         self.train_loader = train_loader
         self.val_loader = val_loader
         self.device = device
         self.data_augmentation = data_augmentation
         self.grad_clip = grad_clip
+        self.checkpoint_interval = checkpoint_interval
+        self.pictures_dir = pictures_dir
+        self.patience = patience
+        self.accumulation_steps = accumulation_steps
 
         self.writer = SummaryWriter(log_dir=log_dir)
 
@@ -210,50 +233,61 @@ class SeismicTrainer:
         self.model.train()
         running_loss = 0.0
         batch_count = 0
-
+        
+        self.optimizer.zero_grad()
+        
+        target_batch_size = self.train_loader.batch_size * self.accumulation_steps
+        
         for batch_idx, (seismic, rgt) in enumerate(self.train_loader):
             if self.data_augmentation:
-                seismic = torch.cat([seismic, HorizontalFlip1(seismic), VerticalFlip(seismic)], dim=0)
-                rgt = torch.cat([rgt, HorizontalFlip1(rgt), VerticalFlip_reverse(rgt)], dim=0)
-
-            # DELETE THIS LATER ITS FOR DEBUGGING
-            # fig, axs = plt.subplots(seismic.shape[0], 1, figsize=(10, 10))
-            # for i, ax in enumerate(axs):
-            #     sl = [i, slice(None), slice(None), 70]
-            #     ax.imshow(np.reshape(seismic[sl], (128, 128)), cmap='gray')
-            #     ax.contour(np.reshape(rgt[sl], (128, 128)), np.linspace(-2,2,10),colors='black',linewidths=2)
-            #     fig.savefig("/mnt/storage/nnseismic/runs/snet-5/debug.png")
-
+                seismic = torch.cat([seismic, HorizontalFlip1(seismic), HorizontalFlip2(seismic), VerticalFlip(seismic)], dim=0)
+                rgt = torch.cat([rgt, HorizontalFlip1(rgt), HorizontalFlip2(rgt), VerticalFlip_reverse(rgt)], dim=0)
+                
+                noise_std = 0.01 * seismic.std()
+                noise = torch.randn_like(seismic) * noise_std
+                seismic = seismic + noise
+            
+            actual_batch_size = seismic.shape[0]
             seismic, rgt = seismic.to(self.device), rgt.to(self.device)
-
-            self.optimizer.zero_grad()
-
+            
             outputs = self.model(seismic)
             loss = self.criterion(outputs, rgt)
-
+            
+            original_loss_value = loss.item()
+            
+            loss = loss * actual_batch_size / target_batch_size
+            
             loss.backward()
-            if self.grad_clip > 0:
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip)
-            self.optimizer.step()
-
-            running_loss += loss.item()
+            
+            running_loss += original_loss_value
             batch_count += 1
-
+            
+            if (batch_idx + 1) % self.accumulation_steps == 0 or batch_idx == len(self.train_loader) - 1:
+                if self.grad_clip > 0:
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip)
+                self.optimizer.step()
+                self.optimizer.zero_grad()
+            
             global_step = epoch * len(self.train_loader) + batch_idx
-            self.writer.add_scalar("Train/SSIM_Loss", loss.item(), global_step)
-
+            self.writer.add_scalar("Train/SSIM_Loss", original_loss_value, global_step)
+            
             if batch_idx % 5 == 0:
                 tqdm.write(
-                    f"Batch {batch_idx}/{len(self.train_loader)}, Loss: {loss.item():.6f}"
+                    f"Batch {batch_idx}/{len(self.train_loader)}, Loss: {original_loss_value:.6f}"
                 )
-
+        
         epoch_loss = running_loss / batch_count
         return epoch_loss
 
-    def validate(self, epoch):
+    def validate(self, epoch, save_plots=False):
         self.model.eval()
         running_loss = 0.0
         batch_count = 0
+        metrics_sum = {"mae": 0.0, "mse": 0.0, "rmse": 0.0, "mrpd": 0.0}
+
+        if save_plots and self.pictures_dir:
+            epoch_pictures_dir = os.path.join(self.pictures_dir, f"epoch_{epoch:04d}")
+            os.makedirs(epoch_pictures_dir, exist_ok=True)
 
         with torch.no_grad():
             for batch_idx, (seismic, rgt) in enumerate(self.val_loader):
@@ -265,11 +299,56 @@ class SeismicTrainer:
                 running_loss += loss.item()
                 batch_count += 1
 
+                pred_np = outputs.squeeze().cpu().float().numpy()
+                target_np = rgt.squeeze().cpu().float().numpy()
+                
+                metrics_sum["mae"] += mae(pred_np, target_np)
+                metrics_sum["mse"] += np.mean((pred_np - target_np) ** 2)
+                metrics_sum["rmse"] += rmse(pred_np, target_np)
+                metrics_sum["mrpd"] += mrpd(pred_np, target_np)
+
                 global_step = epoch * len(self.val_loader) + batch_idx
                 self.writer.add_scalar("Validation/SSIM_Loss", loss.item(), global_step)
 
+                if save_plots and self.pictures_dir:
+                    self._save_prediction_plot(seismic, outputs, rgt, epoch_pictures_dir, batch_idx)
+
         epoch_loss = running_loss / batch_count
+        avg_metrics = {k: v / batch_count for k, v in metrics_sum.items()}
+        
+        self.writer.add_scalar("Validation/MAE", avg_metrics["mae"], epoch)
+        self.writer.add_scalar("Validation/MSE", avg_metrics["mse"], epoch)
+        self.writer.add_scalar("Validation/RMSE", avg_metrics["rmse"], epoch)
+        self.writer.add_scalar("Validation/MRPD", avg_metrics["mrpd"], epoch)
+        
+        tqdm.write(f"Val Metrics - MAE: {avg_metrics['mae']:.4f}, RMSE: {avg_metrics['rmse']:.4f}, MRPD: {avg_metrics['mrpd']:.4f}")
+        
         return epoch_loss
+
+    def _save_prediction_plot(self, seismic, pred_rgt, target_rgt, save_dir, batch_idx):
+        seis_np = seismic[0, 0].cpu().float().numpy()
+        pred_np = pred_rgt[0, 0].cpu().float().numpy()
+        target_np = target_rgt[0, 0].cpu().float().numpy()
+
+        sl = (slice(None), 96, slice(None))
+
+        fig, axs = plt.subplots(1, 2, figsize=(10, 5))
+        
+        axs[0].imshow(seis_np[sl].T, cmap='gray', interpolation='nearest')
+        axs[0].contour(pred_np[sl].T, np.linspace(np.min(pred_np), np.max(pred_np), 20), 
+                       colors='black', linewidths=2)
+        axs[0].set_title('Seismic chunk (Predicted RGT contours)')
+
+        axs[1].imshow(pred_np[sl].T, cmap='prism', interpolation='nearest')
+        axs[1].contour(pred_np[sl].T, np.linspace(np.min(pred_np), np.max(pred_np), 20), 
+                       colors='black', linewidths=2)
+        axs[1].set_title('Predicted RGT')
+
+        plt.tight_layout()
+        
+        save_path = os.path.join(save_dir, f"batch_{batch_idx:04d}.png")
+        fig.savefig(save_path)
+        plt.close(fig)
 
     def train(
         self,
@@ -282,7 +361,6 @@ class SeismicTrainer:
         os.makedirs(save_dir, exist_ok=True)
 
         patience_counter = 0
-        patience = 10
 
         for epoch in range(start_epoch, num_epochs):
             tqdm.write(f"\nEpoch {epoch + 1}/{num_epochs}")
@@ -292,7 +370,8 @@ class SeismicTrainer:
             self.train_losses.append(train_loss)
 
             if self.val_loader is not None:
-                val_loss = self.validate(epoch)
+                save_plots = self.checkpoint_interval > 0 and epoch % self.checkpoint_interval == 0
+                val_loss = self.validate(epoch, save_plots=save_plots)
                 self.val_losses.append(val_loss)
 
                 self.scheduler.step(val_loss)
@@ -323,9 +402,9 @@ class SeismicTrainer:
                 else:
                     patience_counter += 1
 
-                if patience_counter >= patience:
+                if patience_counter >= self.patience:
                     tqdm.write(
-                        f"Early stopping triggered after {patience} epochs without improvement."
+                        f"Early stopping triggered after {self.patience} epochs without improvement."
                     )
                     break
 
@@ -357,11 +436,16 @@ class SeismicTrainer:
             self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
         tqdm.write(f"Loaded model from {checkpoint_path}")
 
-    def resume(self, checkpoint_path, num_epochs):
+    def resume(self, checkpoint_path, num_epochs, new_weight_decay=None):
         checkpoint = torch.load(checkpoint_path, map_location=self.device)
 
         self.model.load_state_dict(checkpoint["model_state_dict"])
         self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+
+        if new_weight_decay is not None:
+            for param_group in self.optimizer.param_groups:
+                param_group["weight_decay"] = new_weight_decay
+            tqdm.write(f"Updated weight_decay to {new_weight_decay}")
 
         start_epoch = checkpoint.get("epoch", 0) + 1
         best_val_loss = checkpoint.get("val_loss", float("inf"))
@@ -391,7 +475,7 @@ def train_model(
     dataset_size=float("inf"),
     dataset_size_val=float("inf"),
     num_workers=0,
-    save_dir="./checkpoints",
+    save_dir="./output",
     log_dir="./logs",
     checkpoint_interval=10,
     pretrained_model=None,
@@ -400,6 +484,8 @@ def train_model(
     name="experiment",
     grad_clip=1.0,
     ssim_max_val=1.0,
+    patience=10,
+    accumulation_steps=1,
 ):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     tqdm.write(f"Using device: {device}")
@@ -442,6 +528,38 @@ def train_model(
 
     full_save_dir = os.path.join(save_dir, name)
     full_log_dir = os.path.join(log_dir, name)
+    pictures_dir = os.path.join(full_save_dir, "pictures")
+    
+    os.makedirs(full_save_dir, exist_ok=True)
+    os.makedirs(pictures_dir, exist_ok=True)
+
+    training_params = {
+        "dataroot": dataroot,
+        "dataroot_val": dataroot_val,
+        "shape": shape,
+        "batch_size": batch_size,
+        "num_epochs": num_epochs,
+        "lr": lr,
+        "weight_decay": weight_decay,
+        "dataset_size": dataset_size,
+        "dataset_size_val": dataset_size_val,
+        "num_workers": num_workers,
+        "save_dir": save_dir,
+        "log_dir": log_dir,
+        "checkpoint_interval": checkpoint_interval,
+        "pretrained_model": pretrained_model,
+        "data_augmentation": data_augmentation,
+        "resume": resume,
+        "name": name,
+        "grad_clip": grad_clip,
+        "ssim_max_val": ssim_max_val,
+        "patience": patience,
+        "accumulation_steps": accumulation_steps,
+    }
+    params_path = os.path.join(full_save_dir, "parameters.json")
+    with open(params_path, "w") as f:
+        json.dump(training_params, f, indent=4)
+    tqdm.write(f"Saved training parameters to {params_path}")
 
     trainer = SeismicTrainer(
         model=model,
@@ -454,13 +572,17 @@ def train_model(
         data_augmentation=data_augmentation,
         grad_clip=grad_clip,
         ssim_max_val=ssim_max_val,
+        checkpoint_interval=checkpoint_interval,
+        pictures_dir=pictures_dir,
+        patience=patience,
+        accumulation_steps=accumulation_steps,
     )
 
     start_epoch = 0
     best_val_loss = float("inf")
 
     if resume is not None:
-        start_epoch, best_val_loss = trainer.resume(resume, num_epochs)
+        start_epoch, best_val_loss = trainer.resume(resume, num_epochs, new_weight_decay=weight_decay)
 
     train_losses, val_losses = trainer.train(
         num_epochs=num_epochs,
@@ -572,6 +694,18 @@ if __name__ == "__main__":
         default=1.0,
         help="max value for SSIM loss normalization (default: 1.0)",
     )
+    parser.add_argument(
+        "--patience",
+        type=int,
+        default=10,
+        help="early stopping patience (epochs without improvement, default: 10)",
+    )
+    parser.add_argument(
+        "--accumulation_steps",
+        type=int,
+        default=1,
+        help="gradient accumulation steps for effective batch size (default: 1, no accumulation)",
+    )
 
     opt = parser.parse_args()
 
@@ -595,4 +729,6 @@ if __name__ == "__main__":
         name=opt.name,
         grad_clip=opt.grad_clip,
         ssim_max_val=opt.ssim_max_val,
+        patience=opt.patience,
+        accumulation_steps=opt.accumulation_steps,
     )

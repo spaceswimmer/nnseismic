@@ -1,14 +1,14 @@
 CUDA_VISIBLE_DEVICES=0 python train.py \
---session_name full_plus_rgt_3 \
+--session_name full_plus_rgt_4 \
 --sessions_path /mnt/storage/nnseismic/runs \
 --dataroot /mnt/storage/nnseismic/synthetic_data/train \
---lr 0.0001 \
+--lr 0.001 \
 --shape 128 128 128 \
 --batch_size 2 \
 --dataset_size 600 \
---nepochs 150 \
+--nepochs 160 \
 --num_workers 4 \
---lr_patience 4 \
+--lr_patience 5 \
 --lr_factor 0.5 \
 --loss_type SSIM \
 --ssim_max_val 7.7236 \
@@ -18,4 +18,4 @@ CUDA_VISIBLE_DEVICES=0 python train.py \
 --valid y \
 --dataroot_val /mnt/storage/nnseismic/synthetic_data/val \
 --dataset_size_val 60 \
---valid_interval 5
+--valid_interval 1

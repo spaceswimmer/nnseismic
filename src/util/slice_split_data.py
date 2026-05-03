@@ -140,14 +140,17 @@ def main():
     if len(files) == 0:
         raise ValueError("No chunks created. Check data shapes and patterns.")
 
-    # Train/Val Split: first file's chunks to val, rest to train (avoids stride leakage)
-    if len(file_chunk_ranges) == 0:
-        raise ValueError("No file chunk ranges recorded.")
+    # Train/Val Split: second file's chunks to val, rest to train (avoids stride leakage)
+    if len(file_chunk_ranges) < 2:
+        raise ValueError("Need at least 2 files for train/val split.")
     
-    val_start, val_end = file_chunk_ranges[0]
+    val_start, val_end = file_chunk_ranges[1]
     val_indices = list(range(val_start, val_end))
     train_indices = []
-    for start, end in file_chunk_ranges[1:]:
+    # First file goes to train
+    train_indices.extend(range(file_chunk_ranges[0][0], file_chunk_ranges[0][1]))
+    # Rest of files (3rd onwards) go to train
+    for start, end in file_chunk_ranges[2:]:
         train_indices.extend(range(start, end))
 
     def move_files(indices, src_s, src_r, dst_s, dst_r):
@@ -156,7 +159,7 @@ def main():
             shutil.move(os.path.join(src_s, fname), dst_s)
             shutil.move(os.path.join(src_r, fname), dst_r)
 
-    print(f"Splitting: {len(train_indices)} train, {len(val_indices)} val chunks (first file -> val).")
+    print(f"Splitting: {len(train_indices)} train, {len(val_indices)} val chunks (second file -> val).")
     
     print("Moving training data...")
     move_files(train_indices, dirs["chunks_seis"], dirs["chunks_rgt"], 
