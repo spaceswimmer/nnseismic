@@ -3,7 +3,9 @@ data/vankor-3d/
 data/grids/*.npz
 data/DNN models/.logs
 data/DNN models/
+
 litr/*
+*.pyc
 *.venv
 *.npy
 *.sgy
