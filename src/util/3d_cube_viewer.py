@@ -9,7 +9,7 @@ import plotly.graph_objects as go
 # ============================================
 # CONFIGURATION - Change this filepath
 # ============================================
-SEISMIC_FILEPATH = "../data/seismicCubes_cumsum_fullstack_2026.33698898.npy"
+SEISMIC_FILEPATH = "../data/vankor_il-5110-5510_xl-1100-1500.npy"
 
 # Subsampling for performance (set to 1 for full resolution, higher for faster rendering)
 SUBSAMPLE_FACTOR = 2
@@ -22,10 +22,11 @@ SLICE_OPACITY = 0.9
 
 # Depth scaling factor (to squish the vertical dimension)
 # 1.0 = no scaling, 0.25 = depth axis will be 25% of original height
-DEPTH_SCALE = 0.9
+DEPTH_SCALE = 1
 
 CBAR_TITLE = 'Amplitude'
 CUBE_NAME = '3D Seismic Cube'
+DEPTH_SLICE = 600
 
 
 def load_seismic_data(filepath, subsample=1):
@@ -68,7 +69,7 @@ def create_3d_cube_visualization(seismic_data):
 
     inline_pos = 0#n_inline // 2
     xline_pos = 0#n_xline // 2
-    depth_pos = n_depth - n_depth // 4
+    depth_pos = n_depth - DEPTH_SLICE
 
     # Slice 1: Inline slice (fixed inline, shows xline-depth plane)
     inline_slice = data_norm[inline_pos, :, :]

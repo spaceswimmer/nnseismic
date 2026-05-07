@@ -8,30 +8,33 @@ import numpy as np
 # Configuration Constants
 CHUNK_SIZE = (128, 128, 128)
 STRIDE = (64, 64, 64)
-SEIS_PATTERN = "seismicCubes_cumsum_fullstack*.npy"
+SEIS_PATTERN = "vankor_il-5110-5510_xl-1100-1500.npy"
 AGE_PATTERN = "faulted_age*.npy"
-SORT_KEY = lambda p: p.rsplit('2026', 1)[-1]
+SORT_KEY = lambda p: p.rsplit("2026", 1)[-1]
+
 
 def normalize_seismic(data):
     """Min-max normalization to [0, 1]."""
     mn, mx = data.min(), data.max()
     return np.zeros_like(data) if mx == mn else (data - mn) / (mx - mn)
 
+
 def normalize_rgt(data):
     """Z-score normalization."""
     m, s = data.mean(), data.std()
     return np.zeros_like(data) if s == 0 else (data - m) / s
+
 
 def get_chunk_slices(data_shape, chunk_size, stride):
     """Calculate all chunk slice positions for a given data shape."""
     h, w, d = data_shape
     ch, cw, cd = chunk_size
     sh, sw, sd = stride
-    
+
     h_steps = max(1, (h - ch) // sh + 1)
     w_steps = max(1, (w - cw) // sw + 1)
     d_steps = max(1, (d - cd) // sd + 1)
-    
+
     slices = []
     for i in range(h_steps):
         for j in range(w_steps):
@@ -42,17 +45,30 @@ def get_chunk_slices(data_shape, chunk_size, stride):
                 start_h = max(0, end_h - ch)
                 start_w = max(0, end_w - cw)
                 start_d = max(0, end_d - cd)
-                slices.append((slice(start_h, end_h), slice(start_w, end_w), slice(start_d, end_d)))           
+                slices.append(
+                    (
+                        slice(start_h, end_h),
+                        slice(start_w, end_w),
+                        slice(start_d, end_d),
+                    )
+                )
     return slices
 
-def save_chunks(data, slices, save_dir, start_idx, norm_fn):
+
+def save_chunks(data, slices, save_dir, start_idx, norm_fn, positional=False):
     """Save chunks using pre-calculated slices, returns next index."""
     count = start_idx
     for sl in slices:
         chunk = norm_fn(data[sl])
-        chunk.tofile(os.path.join(save_dir, f"{count:05d}.dat"))
+        if positional:
+            start_h, start_w, start_d = sl[0].start, sl[1].start, sl[2].start
+            fname = f"{start_h}_{start_w}_{start_d}.dat"
+        else:
+            fname = f"{count:05d}.dat"
+        chunk.tofile(os.path.join(save_dir, fname))
         count += 1
     return count
+
 
 def clean_path(path):
     """Remove file or directory at path."""
@@ -62,10 +78,25 @@ def clean_path(path):
         else:
             shutil.rmtree(path)
 
+
 def main():
-    parser = argparse.ArgumentParser(description="Slice, normalize, and split seismic data.")
-    parser.add_argument("--raw_data_path", type=str, required=True, help="Path to raw .npy files")
-    parser.add_argument("--output_path_root", type=str, required=True, help="Root directory for train/val output")
+    parser = argparse.ArgumentParser(
+        description="Slice, normalize, and split seismic data."
+    )
+    parser.add_argument(
+        "--raw_data_path", type=str, required=True, help="Path to raw .npy files"
+    )
+    parser.add_argument(
+        "--output_path_root",
+        type=str,
+        required=True,
+        help="Root directory for train/val output",
+    )
+    parser.add_argument(
+        "--positional",
+        action="store_true",
+        help="Save chunks with positional naming (i_j_k.dat)",
+    )
     args = parser.parse_args()
 
     base = args.output_path_root
@@ -82,21 +113,25 @@ def main():
     for d in dirs.values():
         clean_path(d)
         os.makedirs(d, exist_ok=True)
-    
+
     # Also clean parent directories
     for parent in set(os.path.dirname(p) for p in dirs.values()):
         if os.path.exists(parent):
             shutil.rmtree(parent)
         os.makedirs(parent, exist_ok=True)
-    
+
     # Recreate specific subdirs after parent cleanup
     for d in dirs.values():
         clean_path(d)
         os.makedirs(d, exist_ok=True)
 
     # Locate and sort files
-    seis_paths = sorted(glob(os.path.join(args.raw_data_path, SEIS_PATTERN)), key=SORT_KEY)
-    age_paths = sorted(glob(os.path.join(args.raw_data_path, AGE_PATTERN)), key=SORT_KEY)
+    seis_paths = sorted(
+        glob(os.path.join(args.raw_data_path, SEIS_PATTERN)), key=SORT_KEY
+    )
+    age_paths = sorted(
+        glob(os.path.join(args.raw_data_path, AGE_PATTERN)), key=SORT_KEY
+    )
 
     if len(seis_paths) != len(age_paths):
         raise ValueError("Mismatch: Number of seismic and age files must be equal.")
@@ -108,42 +143,61 @@ def main():
     global_idx = 0
     file_chunk_ranges = []
     for idx, (s_p, a_p) in enumerate(zip(seis_paths, age_paths)):
-        print(f"Processing pair {idx+1}/{len(seis_paths)}...")
-        
-        seis = np.load(s_p).astype(np.float32)[:,:,250:]
-        age = np.load(a_p).astype(np.float32)[:,:,250:]
-        
+        print(f"Processing pair {idx + 1}/{len(seis_paths)}...")
+
+        seis = np.load(s_p).astype(np.float32)[:, :, 250:]
+        age = np.load(a_p).astype(np.float32)[:, :, 250:]
+
         # Calculate slices based on seismic shape, apply to both
         slices = get_chunk_slices(seis.shape, CHUNK_SIZE, STRIDE)
-        
+
         # Save both with same slices and continuous global index
         start_idx = global_idx
-        next_idx = save_chunks(seis, slices, dirs["chunks_seis"], global_idx, normalize_seismic)
-        next_idx = save_chunks(age, slices, dirs["chunks_rgt"], global_idx, normalize_rgt)
-        
+        next_idx = save_chunks(
+            seis,
+            slices,
+            dirs["chunks_seis"],
+            global_idx,
+            normalize_seismic,
+            args.positional,
+        )
+        next_idx = save_chunks(
+            age, slices, dirs["chunks_rgt"], global_idx, normalize_rgt, args.positional
+        )
+
         del seis, age
         chunks_this_file = next_idx - global_idx
         file_chunk_ranges.append((start_idx, next_idx))
         global_idx = next_idx
         print(f"  Created {chunks_this_file} chunks (total: {global_idx})")
 
+    if args.positional:
+        print(f"Total chunks: {global_idx}")
+        print(
+            "Positional mode: skipping train/val split. Chunks saved to chunks/seis and chunks/rgt."
+        )
+        print("Done.")
+        return
+
     # Verify both directories have identical files
     seis_files = sorted(os.listdir(dirs["chunks_seis"]))
     rgt_files = sorted(os.listdir(dirs["chunks_rgt"]))
-    
+
     if seis_files != rgt_files:
-        raise ValueError(f"File mismatch! Seis: {len(seis_files)}, Rgt: {len(rgt_files)}")
-    
+        raise ValueError(
+            f"File mismatch! Seis: {len(seis_files)}, Rgt: {len(rgt_files)}"
+        )
+
     files = seis_files
     print(f"Total chunks: {len(files)}")
-    
+
     if len(files) == 0:
         raise ValueError("No chunks created. Check data shapes and patterns.")
 
     # Train/Val Split: second file's chunks to val, rest to train (avoids stride leakage)
     if len(file_chunk_ranges) < 2:
         raise ValueError("Need at least 2 files for train/val split.")
-    
+
     val_start, val_end = file_chunk_ranges[1]
     val_indices = list(range(val_start, val_end))
     train_indices = []
@@ -159,20 +213,33 @@ def main():
             shutil.move(os.path.join(src_s, fname), dst_s)
             shutil.move(os.path.join(src_r, fname), dst_r)
 
-    print(f"Splitting: {len(train_indices)} train, {len(val_indices)} val chunks (second file -> val).")
-    
+    print(
+        f"Splitting: {len(train_indices)} train, {len(val_indices)} val chunks (second file -> val)."
+    )
+
     print("Moving training data...")
-    move_files(train_indices, dirs["chunks_seis"], dirs["chunks_rgt"], 
-               dirs["train_seis"], dirs["train_rgt"])
-    
+    move_files(
+        train_indices,
+        dirs["chunks_seis"],
+        dirs["chunks_rgt"],
+        dirs["train_seis"],
+        dirs["train_rgt"],
+    )
+
     print("Moving validation data...")
-    move_files(val_indices, dirs["chunks_seis"], dirs["chunks_rgt"], 
-               dirs["val_seis"], dirs["val_rgt"])
+    move_files(
+        val_indices,
+        dirs["chunks_seis"],
+        dirs["chunks_rgt"],
+        dirs["val_seis"],
+        dirs["val_rgt"],
+    )
 
     # Cleanup
     print("Cleaning intermediate chunks...")
     shutil.rmtree(os.path.join(base, "chunks"))
     print("Done.")
+
 
 if __name__ == "__main__":
     main()

@@ -27,11 +27,12 @@ class ToTensor(object):
 
 
 def sort_list_IDs(list_IDs):
-    list_nums = [int(i.split(".")[0]) for i in list_IDs]
-    list_sort = sorted(enumerate(list_nums), key=lambda x: x[1])
-    list_index = [i[0] for i in list_sort]
-    list_IDs_new = [list_IDs[i] for i in list_index]
-    return list_IDs_new
+    def sort_key(filename):
+        # Remove extension and split by underscore
+        name = filename.rsplit('.', 1)[0]
+        return tuple(int(part) for part in name.split('_'))
+    
+    return sorted(list_IDs, key=sort_key)
 
 
 class SeismicDataset(data.Dataset):

@@ -6,7 +6,7 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 python train.py \
 --dataset_size 200 \
 --nepochs 181 \
 --num_workers 4 \
---lr_patience 2 \
+--lr_patience 10 \
 --lr_factor 0.5 \
 --loss_type SSIM \
 --data_augmentation n \

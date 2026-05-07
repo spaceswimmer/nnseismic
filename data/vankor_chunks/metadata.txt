@@ -1,0 +1,4 @@
+original_shape=401,401,3001
+chunk_size=128,128,128
+stride=64,64,64
+num_chunks=1656

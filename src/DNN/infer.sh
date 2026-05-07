@@ -1,4 +1,4 @@
-python predict_chunk.py \
---model /mnt/storage/nnseismic/runs/snet-6-nosmooth/best_model.pth \
---data /mnt/storage/nnseismic/synthetic_data/val \
---output /mnt/storage/nnseismic/runs/snet-6-nosmooth/infer
+python DNN/predict_chunk.py \
+--model ../data/synthetic_data/run/snet-10/best_model.pth \
+--data ../data/synthetic_data/val \
+--output ../data/synthetic_data/run/snet-10/infer
