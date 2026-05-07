@@ -11,7 +11,7 @@ litr/*
 *.npy
 *.sgy
 *.las
-*.ipynb_checkpoints
+*.ipynb_checkpoints/*
 .continue/*
 .vscode/*
 # Byte-compiled / optimized / DLL files
