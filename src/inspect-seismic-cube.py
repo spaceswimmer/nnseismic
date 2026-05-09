@@ -44,6 +44,8 @@ def plot_seismic_with_surface(
     n_il, n_xl, n_samples = traces.shape
     il_vals = np.arange(il_range[0], il_range[0] + n_il)
 
+    surfaces = sorted(surfaces, key=lambda s: np.mean(s["t0"]))
+
     surface_grids = []
     for surf in surfaces:
         grid = np.full((n_il, n_xl), np.nan)
@@ -74,7 +76,7 @@ def plot_seismic_with_surface(
         vmax=np.max(np.abs(slice_data)),
     )
 
-    colors = plt.cm.tab10(np.linspace(0, 1, len(surfaces)))
+    colors = plt.cm.tab20b(np.linspace(0, 1, len(surfaces)))
     for grid, surf, color in zip(surface_grids, surfaces, colors):
         surface_line = grid[initial_idx, :]
         valid_xl = ~np.isnan(surface_line)

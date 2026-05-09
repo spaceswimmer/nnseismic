@@ -108,7 +108,7 @@ def plot_seismic_with_rgt_isoline(
         vmax=np.max(np.abs(slice_data)),
     )
 
-    colors = plt.cm.tab10(np.linspace(0, 1, len(surfaces_with_isoline)))
+    colors = plt.cm.tab20b(np.linspace(0, 1, len(surfaces_with_isoline)))
     for grid, (surf, opt_v, rmse), color in zip(rgt_grids, surfaces_with_isoline, colors):
         surface_line = grid[initial_idx, :]
         valid_xl = ~np.isnan(surface_line)
@@ -198,6 +198,8 @@ def main():
         )
         print(f"  {surf['name']}: optimal v={opt_v:.1f}, RMSE={rmse:.1f} ms")
         surfaces_with_isoline.append((surf, opt_v, rmse))
+
+    surfaces_with_isoline.sort(key=lambda x: np.mean(x[0]["t0"]))
 
     plot_seismic_with_rgt_isoline(
         traces,
